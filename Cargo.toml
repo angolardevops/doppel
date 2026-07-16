@@ -1,6 +1,6 @@
 [package]
 name = "doppel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Doppel — encontra e remove ficheiros duplicados com verificação byte-a-byte e UI web embebida em tempo real"
 license = "MIT"
