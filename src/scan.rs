@@ -144,10 +144,16 @@ pub fn run_with(state: &AppState, force: bool) {
         })
         .collect();
 
-    // Atualiza a cache de hashes com os recém-calculados.
+    // Atualiza a cache de hashes com os recém-calculados (com limite de memória).
     {
         let mut cache = state.hash_cache.lock().unwrap();
+        if cache.len() > state::HASH_CACHE_CAP {
+            cache.clear(); // bound simples: evita crescimento ilimitado no serviço
+        }
         for (h, f) in &fresh {
+            if cache.len() >= state::HASH_CACHE_CAP {
+                break;
+            }
             cache.insert(
                 f.path.clone(),
                 state::HashEntry { mtime: f.modified.unwrap_or(0), size: f.size, hash: h.clone() },
@@ -189,18 +195,27 @@ pub fn run_with(state: &AppState, force: bool) {
         r.reclaimable = reclaimable;
     }
 
-    // Guarda o resultado na cache (TTL = SCAN_TTL).
+    // Guarda o resultado na cache (TTL = SCAN_TTL, com limite de pastas).
     {
         let mut c = state.scan_cache.lock().unwrap();
         c.insert(
             root_key,
             state::CachedScan { ts: state::now(), total_files, root_size, reclaimable, groups },
         );
+        // evita crescer sem fim: mantém só as SCAN_CACHE_CAP mais recentes
+        while c.len() > state::SCAN_CACHE_CAP {
+            if let Some(oldest) = c.iter().min_by_key(|(_, e)| e.ts).map(|(k, _)| k.clone()) {
+                c.remove(&oldest);
+            } else {
+                break;
+            }
+        }
     }
 
     state.set_phase(state::IDLE);
     state.set_progress(0, 0);
     state.bump_version();
+    state::release_memory(); // devolve os intermediários (Vecs/HashMaps) ao SO
 }
 
 /// Hash BLAKE3 de um ficheiro por streaming (memória constante).

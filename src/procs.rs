@@ -28,9 +28,11 @@ pub fn collect(sys: &mut System) -> ProcSnapshot {
     let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
 
     // Base leve (sem resolver serviço ainda — só para os que entram no top).
+    // Exclui threads (thread_kind = Some) para não duplicar um processo em N linhas.
     let base: Vec<(u32, String, f32, u64)> = sys
         .processes()
         .values()
+        .filter(|p| p.thread_kind().is_none())
         .map(|p| {
             (
                 p.pid().as_u32(),

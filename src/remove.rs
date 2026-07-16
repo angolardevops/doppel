@@ -138,6 +138,7 @@ pub fn operate(state: &AppState, paths: Vec<String>, mode: Mode) -> OpReport {
     }
     state.set_phase(state::IDLE);
     state.set_progress(0, 0);
+    state::release_memory();
     report
 }
 
@@ -272,6 +273,7 @@ fn finalize_quarantine(state: &AppState, removed_ids: &HashSet<u64>) {
     }
     state.set_phase(state::IDLE);
     state.set_progress(0, 0);
+    state::release_memory();
 }
 
 // ---- utilitários ----------------------------------------------------------
@@ -401,6 +403,38 @@ mod tests {
         // mas b1 sozinho seria o último) — via grupo, força manter 1.
         let _ = fs::remove_dir_all(&home);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    fn rss_kb(field: &str) -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap_or_default()
+            .lines()
+            .find(|l| l.starts_with(field))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|x| x.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// Medição manual (ignorada por omissão):
+    ///   DOPPEL_TEST_DIR=/caminho cargo test --release -- --ignored --nocapture mem_scan_big
+    #[test]
+    #[ignore]
+    fn mem_scan_big() {
+        let dir = std::env::var("DOPPEL_TEST_DIR").unwrap_or_else(|_| "/home/walter/.cargo".into());
+        let home = tmp("home3");
+        let st = mkstate(std::path::PathBuf::from(&dir), home.clone());
+        println!("\n[mem] pasta={dir}\n[mem] antes:  RSS={} MB", rss_kb("VmRSS:") / 1024);
+        crate::scan::run_with(&st, true);
+        let (tf, ng) = {
+            let r = st.result.lock().unwrap();
+            (r.total_files, r.groups.len())
+        };
+        println!(
+            "[mem] depois: RSS={} MB · pico(VmHWM)={} MB · ficheiros={tf} · grupos={ng}",
+            rss_kb("VmRSS:") / 1024,
+            rss_kb("VmHWM:") / 1024,
+        );
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

@@ -15,6 +15,22 @@ use crate::scan::DupGroup;
 
 /// Tempo de vida do resultado de análise em cache (segundos) — 30 minutos.
 pub const SCAN_TTL: u64 = 30 * 60;
+/// Limite de entradas na cache de hashes (bound de memória do serviço).
+pub const HASH_CACHE_CAP: usize = 300_000;
+/// Nº máximo de pastas com resultado em cache.
+pub const SCAN_CACHE_CAP: usize = 8;
+
+extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
+/// Pede ao alocador (glibc) para devolver heap livre ao SO. Chamado depois de
+/// trabalho pesado (scan/remoção) para que o RSS não fique inflado.
+pub fn release_memory() {
+    unsafe {
+        let _ = malloc_trim(0);
+    }
+}
 
 #[derive(Serialize, Default)]
 pub struct ScanResult {

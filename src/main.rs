@@ -80,6 +80,12 @@ fn main() {
         no_browser = true;
     }
 
+    // Limita o pool do rayon: menos threads = menos arenas de malloc e menor
+    // pico de memória ao hashear árvores enormes (o ganho de velocidade acima
+    // de ~8 threads em I/O de disco é marginal).
+    let threads = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
+
     let (run_user, run_home) = auth::current_user();
 
     // Raiz inicial: argumento > home do utilizador.
