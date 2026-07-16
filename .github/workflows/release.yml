@@ -1,7 +1,8 @@
 name: release
 
-# Gera binários Linux (glibc) para x86_64 e aarch64 e anexa-os ao Release
-# sempre que uma tag `v*` é criada. Também pode ser disparado manualmente.
+# Gera binários Linux (glibc) para x86_64 e aarch64 — build NATIVO em cada
+# arquitetura (runners x64 e ARM64 do GitHub) — e anexa-os ao Release sempre
+# que uma tag `v*` é criada. Também pode ser disparado manualmente.
 on:
   push:
     tags: ["v*"]
@@ -12,46 +13,30 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-latest
             asset: doppel-linux-x64
-            cross: false
-          - target: aarch64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
             asset: doppel-linux-arm64
-            cross: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Toolchain Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      # Build nativo x86_64 — precisa do libpam (dev) no runner.
-      - name: Instalar libpam (nativo)
-        if: ${{ !matrix.cross }}
-        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0-dev
+      - name: Instalar libpam (dev)
+        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0g-dev
 
-      - name: Build (nativo)
-        if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }}
-
-      # Build cross aarch64 — o `cross` instala o libpam arm64 no contentor (ver Cross.toml).
-      - name: Instalar cross
-        if: ${{ matrix.cross }}
-        run: cargo install cross --locked
-
-      - name: Build (cross)
-        if: ${{ matrix.cross }}
-        run: cross build --release --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release
 
       - name: Preparar artefacto
         run: |
-          cp "target/${{ matrix.target }}/release/doppel" "${{ matrix.asset }}"
+          cp target/release/doppel "${{ matrix.asset }}"
           strip "${{ matrix.asset }}" || true
           sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
 

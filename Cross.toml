@@ -1,8 +1,0 @@
-# Cross-compilação com `cross`: instala o libpam (dev) da arquitetura-alvo dentro
-# do contentor, para que o build.rs/linker encontrem `libpam.so`.
-[target.aarch64-unknown-linux-gnu]
-pre-build = [
-    "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update",
-    "apt-get install --assume-yes libpam0-dev:$CROSS_DEB_ARCH",
-]
