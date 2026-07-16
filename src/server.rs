@@ -9,15 +9,20 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, fsops, procs, remove, scan, stats, sysmon};
+use crate::{auth, browse, fsops, procs, remove, scan, stats, sysmon, term};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
+const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
+const XTERM_CSS: &str = include_str!("../assets/vendor/xterm.css");
+const ADDON_FIT: &str = include_str!("../assets/vendor/addon-fit.js");
+const ADDON_WEBGL: &str = include_str!("../assets/vendor/addon-webgl.js");
 const COOKIE: &str = "doppel_sess";
 
 pub fn serve(server: Server, state: Arc<AppState>) {
     let server = Arc::new(server);
     let mut handles = Vec::new();
-    for _ in 0..4 {
+    // 8 workers: um streaming de terminal ocupa um worker durante a sessão.
+    for _ in 0..8 {
         let server = Arc::clone(&server);
         let state = Arc::clone(&state);
         handles.push(thread::spawn(move || {
@@ -45,6 +50,10 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let _ = req.respond(resp);
             return;
         }
+        (Method::Get, "/vendor/xterm.js") => return serve_asset(req, XTERM_JS, "application/javascript"),
+        (Method::Get, "/vendor/xterm.css") => return serve_asset(req, XTERM_CSS, "text/css"),
+        (Method::Get, "/vendor/addon-fit.js") => return serve_asset(req, ADDON_FIT, "application/javascript"),
+        (Method::Get, "/vendor/addon-webgl.js") => return serve_asset(req, ADDON_WEBGL, "application/javascript"),
         (Method::Get, "/api/session") => {
             let authed = session_token(&req).map(|t| state.sessions.valid(&t)).unwrap_or(false);
             respond_json(req, 200, &json!({
@@ -184,6 +193,45 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let b = read_body(&mut req);
             let rec = b.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
             fs_result(req, fsops::delete(str_of(&b, "path"), rec));
+        }
+        // ---- terminal embebido (PTY) ----
+        (Method::Post, "/api/term/new") => {
+            let b = read_body(&mut req);
+            let rows = b.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+            let cols = b.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+            term::reap(&mut state.terms.lock().unwrap());
+            match term::new_term(state, rows, cols) {
+                Ok(id) => respond_json(req, 200, &json!({"id": id})),
+                Err(e) => respond_json(req, 500, &json!({"error": e})),
+            }
+        }
+        (Method::Get, "/api/term/stream") => {
+            let id = query_param(&query, "id").unwrap_or_default();
+            match term::take_reader(state, &id) {
+                Some(reader) => {
+                    let hdr = Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap();
+                    let resp = Response::new(tiny_http::StatusCode(200), vec![hdr], reader, None, None);
+                    let _ = req.respond(resp);
+                }
+                None => respond_json(req, 409, &json!({"error": "stream indisponível"})),
+            }
+        }
+        (Method::Post, "/api/term/input") => {
+            let id = query_param(&query, "id").unwrap_or_default();
+            let b = read_body(&mut req);
+            fs_result(req, term::input(state, &id, str_of(&b, "data").as_bytes()));
+        }
+        (Method::Post, "/api/term/resize") => {
+            let id = query_param(&query, "id").unwrap_or_default();
+            let b = read_body(&mut req);
+            let rows = b.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+            let cols = b.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+            fs_result(req, term::resize(state, &id, rows, cols));
+        }
+        (Method::Post, "/api/term/close") => {
+            let id = query_param(&query, "id").unwrap_or_default();
+            term::close(state, &id);
+            respond_json(req, 200, &json!({"ok": true}));
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();
@@ -413,4 +461,11 @@ fn json_header() -> Header {
 }
 fn html_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
+}
+
+fn serve_asset(req: Request, body: &str, ctype: &str) {
+    let mut resp = Response::from_string(body);
+    resp.add_header(Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()).unwrap());
+    resp.add_header(Header::from_bytes(&b"Cache-Control"[..], &b"max-age=86400"[..]).unwrap());
+    let _ = req.respond(resp);
 }

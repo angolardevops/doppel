@@ -184,6 +184,8 @@ pub struct AppState {
     pub proc_sys: Mutex<System>,
     /// Histórico de KPIs para os gráficos (ring buffer).
     pub history: Mutex<VecDeque<Sample>>,
+    /// Sessões de terminal ativas (id → PTY).
+    pub terms: Mutex<HashMap<String, crate::term::TermSession>>,
 }
 
 impl AppState {
@@ -206,6 +208,7 @@ impl AppState {
             hash_cache: Mutex::new(HashMap::new()),
             proc_sys: Mutex::new(System::new()),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_CAP)),
+            terms: Mutex::new(HashMap::new()),
         }
     }
 

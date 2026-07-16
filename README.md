@@ -54,6 +54,15 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | ⏳ **Progresso animado** | Barra animada durante a análise (enumerar/hashing) e durante apagar/mover/purgar/restaurar. |
 | 📦 **Binário único** | UI embebida, sem ficheiros externos. Porta alta aleatória atribuída pelo SO. |
 
+### Consola de host (para além dos duplicados)
+
+| | |
+|---|---|
+| 📊 **Monitorização** | KPIs em tempo real (CPU, RAM, swap, temperatura, GPU via `nvidia-smi`, uptime, load), **mapa de calor por core** (online/offline), **gráficos históricos** (~10 min) e Top-10 processos com o serviço systemd. |
+| 💽 **Partições / FHS** | Todas as montagens com tipo de fs, ocupação e livre. |
+| 📁 **Gestor de ficheiros** | Navegar, criar pasta/ficheiro, renomear, `chmod`, apagar — com as permissões do utilizador. |
+| 🖥️ **Terminal embebido** | Shell real (PTY) no browser via [xterm.js](https://xtermjs.org) com **renderer WebGL** (aceleração GPU). |
+
 ---
 
 ## Instalação

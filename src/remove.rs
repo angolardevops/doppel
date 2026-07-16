@@ -521,6 +521,33 @@ mod tests {
     }
 
     #[test]
+    fn terminal_pty_roundtrip() {
+        std::env::set_var("SHELL", "/bin/sh");
+        let home = tmp("home6");
+        let st = mkstate(tmp("scan6"), home.clone());
+        let id = crate::term::new_term(&st, 24, 80).expect("abrir pty");
+        crate::term::input(&st, &id, b"echo DOPPEL_OK_123\nexit\n").expect("input");
+        let mut reader = crate::term::take_reader(&st, &id).expect("reader");
+        let mut out = String::new();
+        let mut buf = [0u8; 4096];
+        for _ in 0..500 {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    out.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if out.contains("DOPPEL_OK_123") {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        crate::term::close(&st, &id);
+        assert!(out.contains("DOPPEL_OK_123"), "o PTY deve devolver a saída do shell; obtido: {out:?}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn cache_and_procs() {
         let home = tmp("home2");
         let root = tmp("scan2");

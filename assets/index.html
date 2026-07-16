@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Doppel</title>
+<link rel="stylesheet" href="/vendor/xterm.css" />
 <style>
   :root{
     --bg:#0b0f17; --panel:#131a26; --panel2:#0f1520; --line:#1e2836;
@@ -197,6 +198,13 @@
   .chart .ct b{color:var(--txt);font-size:14px}
   .chart svg{width:100%;height:56px;display:block;margin-top:6px}
 
+  /* terminal */
+  .termbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .termbar .info{color:var(--mut);font-size:12px}
+  .termwrap{background:#05080d;border:1px solid var(--line);border-radius:12px;padding:10px;height:70vh;min-height:420px}
+  #term{width:100%;height:100%}
+  .xterm{height:100%}
+
   /* gestor de ficheiros */
   .fname{font-weight:600;cursor:pointer}
   .fname:hover{color:var(--acc)}
@@ -249,6 +257,7 @@
     <div class="tab on" data-tab="dups" onclick="switchTab('dups')">Duplicados</div>
     <div class="tab" data-tab="quar" onclick="switchTab('quar')">Quarentena <span class="n" id="qtabn">0</span></div>
     <div class="tab" data-tab="files" onclick="switchTab('files')">Ficheiros</div>
+    <div class="tab" data-tab="term" onclick="switchTab('term')">Terminal</div>
     <div class="tab" data-tab="sys" onclick="switchTab('sys')">Sistema</div>
   </div>
 
@@ -377,6 +386,17 @@
     </div>
   </div>
 
+  <!-- ===== TAB: TERMINAL ===== -->
+  <div id="view-term" style="display:none">
+    <div class="termbar">
+      <div class="info">Shell como <b id="term-user">—</b> · aceleração WebGL <span id="term-accel" class="psvc"></span></div>
+      <div class="spacer"></div>
+      <button id="term-restart" class="btn-ghost">↻ Reiniciar sessão</button>
+    </div>
+    <div class="termwrap"><div id="term"></div></div>
+    <div class="hint" style="margin-top:8px">⚠️ Acesso shell completo com as tuas permissões. Local (127.0.0.1) e protegido por login.</div>
+  </div>
+
   <footer>
     <span class="brand">◈ Doppel</span>
     <span class="dot">·</span>
@@ -400,6 +420,9 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/addon-webgl.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 let GROUPS=[], VERSION=-1, SELECTED=new Set(), openState={}, renderLimit=80;
@@ -445,8 +468,10 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-quar').style.display = t==='quar'?'block':'none';
   $('#view-sys').style.display = t==='sys'?'block':'none';
   $('#view-files').style.display = t==='files'?'block':'none';
+  $('#view-term').style.display = t==='term'?'block':'none';
   if(t==='quar') loadQuar();
   if(t==='files'){ if(!$('#fcrumb').value) $('#fcrumb').value = RUN.run_home||'/'; loadFs($('#fcrumb').value); }
+  if(t==='term') openTerm();
   if(t==='sys'){ pollMonitor(); if(!window.__procTimer) window.__procTimer=setInterval(pollMonitor,2000); }
   else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
 };
@@ -792,6 +817,43 @@ $('#m-ok').onclick = async ()=>{
 };
 function toast(msg,err){ const t=$('#toast'); t.textContent=msg; t.className='toast on'+(err?' err':'');
   setTimeout(()=>t.className='toast',4500); }
+
+// ---- terminal embebido ----
+let TERM=null, TERMID=null, TERMRO=null;
+function openTerm(){
+  $('#term-user').textContent = RUN.run_user||'';
+  if(TERM){ try{window.__fit&&window.__fit.fit();}catch(e){} TERM.focus(); return; }
+  if(typeof Terminal==='undefined'){ toast('xterm.js não carregou',true); return; }
+  TERM = new Terminal({ fontSize:13, fontFamily:'ui-monospace,"JetBrains Mono",Menlo,monospace',
+    cursorBlink:true, scrollback:8000, theme:{ background:'#05080d', foreground:'#e6edf6', cursor:'#3ddad7' } });
+  const fit = new FitAddon.FitAddon(); TERM.loadAddon(fit); window.__fit=fit;
+  TERM.open($('#term'));
+  try{ const gl=new WebglAddon.WebglAddon(); gl.onContextLoss(()=>{ gl.dispose(); }); TERM.loadAddon(gl);
+    $('#term-accel').textContent='ativa (GPU)'; }
+  catch(e){ $('#term-accel').textContent='indisponível — canvas'; }
+  try{ fit.fit(); }catch(e){}
+  TERM.onData(d=>{ if(TERMID) fetch('/api/term/input?id='+TERMID,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({data:d})}); });
+  TERMRO = new ResizeObserver(()=>{ if(!TERM)return; try{fit.fit();}catch(e){}
+    if(TERMID) fetch('/api/term/resize?id='+TERMID,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rows:TERM.rows,cols:TERM.cols})}); });
+  TERMRO.observe(document.querySelector('.termwrap'));
+  startTermSession();
+}
+async function startTermSession(){
+  let r; try{ r = await (await fetch('/api/term/new',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rows:TERM.rows,cols:TERM.cols})})).json(); }catch(e){ toast('falha a abrir terminal',true); return; }
+  if(r.error){ toast(r.error,true); return; }
+  TERMID = r.id;
+  const resp = await fetch('/api/term/stream?id='+TERMID);
+  const reader = resp.body.getReader();
+  (async()=>{ try{ for(;;){ const {done,value}=await reader.read(); if(done)break; TERM.write(value); } }catch(e){}
+    TERM.write('\r\n\x1b[90m[sessão terminada — carrega em ↻ Reiniciar]\x1b[0m\r\n'); TERMID=null; })();
+  TERM.focus();
+}
+$('#term-restart').onclick = async ()=>{ if(TERMID) fetch('/api/term/close?id='+TERMID,{method:'POST'});
+  TERMID=null; if(TERM) TERM.reset(); await startTermSession(); };
+window.addEventListener('beforeunload',()=>{ if(TERMID) navigator.sendBeacon('/api/term/close?id='+TERMID); });
 
 boot();
 </script>
