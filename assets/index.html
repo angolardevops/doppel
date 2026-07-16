@@ -137,6 +137,29 @@
   .more{width:100%;margin-top:6px}
   .hint{color:var(--dim);font-size:12px;margin:2px 0 14px}
 
+  /* cache */
+  .cacheline{display:flex;align-items:center;gap:12px;margin-top:10px;color:var(--mut);font-size:12px}
+  .cacheline #cacheinfo{flex:1}
+  .cachebtn{font-size:12px;padding:5px 11px;border-radius:8px}
+  .gcheck{width:15px;height:15px;accent-color:var(--warn);cursor:pointer;flex:none}
+
+  /* sistema / processos */
+  .syscols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.syscols{grid-template-columns:1fr}}
+  .syscol{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .systitle{padding:11px 15px;font-weight:800;border-bottom:1px solid var(--line);background:#0f1621}
+  .ptab{width:100%;border-collapse:collapse;font-size:13px}
+  .ptab th{text-align:left;color:var(--dim);font-weight:700;font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .ptab td{padding:8px 12px;border-top:1px solid #171f2c;vertical-align:middle}
+  .ptab td.num,.ptab th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ptab .pname{font-weight:600}
+  .ptab .psvc{color:var(--dim);font-size:11px}
+  .ptab .pbar{position:relative}
+  .ptab .pbar i{position:absolute;left:0;top:0;bottom:0;background:#ff6b7d22;border-radius:4px;z-index:0}
+  .ptab .pbar span{position:relative;z-index:1}
+  .ptab tr:hover td{background:#151d2b}
+
   .ov{position:fixed;inset:0;background:#04070ccc;display:none;place-items:center;z-index:40;backdrop-filter:blur(3px)}
   .ov.on{display:grid}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:520px;width:92%;padding:22px}
@@ -181,6 +204,7 @@
   <div class="tabs">
     <div class="tab on" data-tab="dups" onclick="switchTab('dups')">Duplicados</div>
     <div class="tab" data-tab="quar" onclick="switchTab('quar')">Quarentena <span class="n" id="qtabn">0</span></div>
+    <div class="tab" data-tab="sys" onclick="switchTab('sys')">Sistema</div>
   </div>
 
   <!-- seletor de pasta -->
@@ -188,7 +212,12 @@
     <div class="row">
       <input class="crumb mono" id="crumb" placeholder="/caminho/para/pasta" />
       <button id="browsebtn" class="btn-ghost">📁 Procurar…</button>
-      <button id="scanbtn" class="btn-primary">⟳ Analisar esta pasta</button>
+      <button id="scanbtn" class="btn-primary">⟳ Analisar</button>
+      <button id="rescanbtn" class="btn-ghost" title="Ignorar cache e re-analisar do zero">↻ Forçar</button>
+    </div>
+    <div class="cacheline">
+      <span id="cacheinfo">cache: —</span>
+      <button id="clearcache" class="btn-ghost cachebtn">🧹 Limpar cache</button>
     </div>
     <div class="dirlist" id="dirlist"></div>
   </div>
@@ -215,7 +244,7 @@
   <!-- ===== TAB: DUPLICADOS ===== -->
   <div id="view-dups">
     <div class="toolbar" id="dtoolbar" style="display:none">
-      <button class="btn-ghost" id="selall">☑ Selecionar extras</button>
+      <button class="btn-ghost" id="selall">☑ Selecionar todos os duplicados</button>
       <button class="btn-ghost" id="selnone">☐ Limpar seleção</button>
       <div class="info">Selecionados: <b id="sel-count">0</b> · <span id="sel-size">0 B</span></div>
       <div class="spacer"></div>
@@ -237,6 +266,23 @@
       <button class="btn-danger" id="purgebtn" disabled>🔥 Remover definitivo</button>
     </div>
     <div id="qlist"></div>
+  </div>
+
+  <!-- ===== TAB: SISTEMA ===== -->
+  <div id="view-sys" style="display:none">
+    <div class="hint" id="sysinfo">Top 10 processos por CPU e por memória · <span id="ncpu"></span> · atualiza a cada 2s</div>
+    <div class="syscols">
+      <div class="syscol">
+        <div class="systitle">🔥 Top CPU</div>
+        <table class="ptab"><thead><tr><th>Processo</th><th>Serviço</th><th class="num">CPU</th><th class="num">Memória</th></tr></thead>
+          <tbody id="cpu-body"></tbody></table>
+      </div>
+      <div class="syscol">
+        <div class="systitle">🧠 Top Memória</div>
+        <table class="ptab"><thead><tr><th>Processo</th><th>Serviço</th><th class="num">Memória</th><th class="num">CPU</th></tr></thead>
+          <tbody id="mem-body"></tbody></table>
+      </div>
+    </div>
   </div>
 </div></div>
 
@@ -297,7 +343,10 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-dups').style.display = t==='dups'?'block':'none';
   $('#tab-dups').style.display = t==='dups'?'block':'none';
   $('#view-quar').style.display = t==='quar'?'block':'none';
+  $('#view-sys').style.display = t==='sys'?'block':'none';
   if(t==='quar') loadQuar();
+  if(t==='sys'){ pollProcs(); if(!window.__procTimer) window.__procTimer=setInterval(pollProcs,2000); }
+  else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
 };
 
 // ---- poll status ----
@@ -324,8 +373,14 @@ async function poll(){
     $('#c-disk-sub').textContent='de '+fmt(s.disk.total)+' · '+fmt(s.disk.free)+' livre';
     $('#disk-bar').style.width=p.toFixed(1)+'%'; }
 
+  // info de cache
+  let ci = `cache: ${s.cache_count||0} pasta(s) guardada(s)`;
+  if(s.cache_age!=null){ const m=Math.floor(s.cache_age/60), sec=s.cache_age%60;
+    ci += ` · esta pasta em cache há ${m>0?m+'m':''}${sec}s (válido 30m)`; }
+  $('#cacheinfo').textContent = ci;
+
   updateProg(s);
-  $('#scanbtn').disabled = s.busy;
+  $('#scanbtn').disabled = s.busy; $('#rescanbtn').disabled = s.busy;
   if(s.version !== VERSION){ VERSION=s.version; await loadGroups(); if(TAB==='quar') await loadQuar(); }
 }
 
@@ -360,13 +415,38 @@ async function browseTo(path){
   const dl=$('#dirlist'); dl.innerHTML=html; dl.classList.add('on');
 }
 function js(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
-$('#scanbtn').onclick = async ()=>{
+async function doScan(force){
   $('#dirlist').classList.remove('on');
   const r = await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({path:$('#crumb').value})});
+    body:JSON.stringify({path:$('#crumb').value, force:!!force})});
   if(r.status===400){ toast('Pasta inválida', true); return; }
+  if(r.status===409){ toast('Já há uma operação em curso', true); return; }
   VERSION=-1;
+}
+$('#scanbtn').onclick = ()=> doScan(false);
+$('#rescanbtn').onclick = ()=> doScan(true);
+$('#clearcache').onclick = async ()=>{
+  await fetch('/api/cache/clear',{method:'POST'});
+  toast('Cache limpa', false); VERSION=-1; poll();
 };
+
+// ---- processos (tab Sistema) ----
+async function pollProcs(){
+  let s; try{ s = await (await fetch('/api/processes')).json(); }catch(e){ return; }
+  $('#ncpu').textContent = s.ncpu+' cores';
+  const maxCpu = Math.max(1, ...s.top_cpu.map(p=>p.cpu));
+  const maxMem = Math.max(1, ...s.top_mem.map(p=>p.mem));
+  $('#cpu-body').innerHTML = s.top_cpu.map(p=>procRow(p,'cpu',maxCpu,maxMem)).join('');
+  $('#mem-body').innerHTML = s.top_mem.map(p=>procRow(p,'mem',maxCpu,maxMem)).join('');
+}
+function procRow(p, primary, maxCpu, maxMem){
+  const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
+  const cpuCell=`<td class="num pbar"><i style="width:${cpuPct}%"></i><span>${p.cpu.toFixed(1)}%</span></td>`;
+  const memCell=`<td class="num pbar"><i style="width:${memPct}%"></i><span>${fmt(p.mem)}</span></td>`;
+  const nameCell=`<td><div class="pname">${esc(p.name)}</div><div class="psvc">pid ${p.pid}</div></td>`;
+  const svcCell=`<td class="psvc mono">${esc(p.service)}</td>`;
+  return `<tr>${nameCell}${svcCell}${primary==='cpu'?cpuCell+memCell:memCell+cpuCell}</tr>`;
+}
 
 // ---- grupos duplicados ----
 async function loadGroups(){
@@ -383,7 +463,10 @@ function renderGroups(){
   const shown = GROUPS.slice(0,renderLimit); let html='';
   shown.forEach(g=>{
     const open=openState[g.hash]?'open':'';
+    const gsel=g.files.slice(1).every(f=>SELECTED.has(f.path)) && g.files.length>1;
     html += `<div class="group ${open}"><div class="ghead" onclick="toggle('${g.hash}')">
+      <input type="checkbox" class="gcheck" ${gsel?'checked':''} title="selecionar duplicados deste grupo"
+        onclick="event.stopPropagation()" onchange="toggleGroup('${g.hash}',this.checked)">
       <span class="chev">▶</span><span class="badge">${fmt(g.size)}</span>
       <span class="ghash mono">×${g.count} · ${short(g.hash)}</span>
       <span class="gwaste">desperdício <b>${fmt(g.wasted)}</b></span></div><div class="files">`;
@@ -401,6 +484,8 @@ function renderGroups(){
 }
 window.toggle = h => { openState[h]=!openState[h]; renderGroups(); };
 window.onCheck = el => { const p=decodeURIComponent(el.dataset.p); el.checked?SELECTED.add(p):SELECTED.delete(p); updateSel(); };
+window.toggleGroup = (h,on)=>{ const g=GROUPS.find(x=>x.hash===h); if(!g)return;
+  g.files.slice(1).forEach(f=> on?SELECTED.add(f.path):SELECTED.delete(f.path)); renderGroups(); };
 window.makeKeeper = (h,fi)=>{ const g=GROUPS.find(x=>x.hash===h); if(!g)return;
   const k=g.files.splice(fi,1)[0]; g.files.unshift(k); SELECTED.delete(k.path); renderGroups(); };
 function updateSel(){ let n=0,sz=0; GROUPS.forEach(g=>g.files.forEach(f=>{ if(SELECTED.has(f.path)){n++;sz+=f.size;} }));

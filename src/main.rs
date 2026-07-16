@@ -7,6 +7,7 @@
 
 mod auth;
 mod browse;
+mod procs;
 mod remove;
 mod scan;
 mod server;

@@ -31,10 +31,34 @@ pub struct DupGroup {
     pub files: Vec<FileInfo>,
 }
 
-/// Executa a varredura completa e escreve o resultado no estado partilhado.
-/// Pensado para correr numa thread dedicada.
-pub fn run(state: &AppState) {
+/// Executa a varredura e escreve o resultado no estado partilhado.
+/// Se `force` for falso e existir um resultado em cache fresco (< SCAN_TTL)
+/// para esta pasta, devolve-o instantaneamente. Pensado para correr numa thread.
+pub fn run_with(state: &AppState, force: bool) {
     let root = state.root();
+    let root_key = root.to_string_lossy().into_owned();
+
+    // Cache de resultado: se fresco e não forçado, aproveita e sai já.
+    if !force {
+        let cached = {
+            let c = state.scan_cache.lock().unwrap();
+            c.get(&root_key)
+                .filter(|e| state::now().saturating_sub(e.ts) < state::SCAN_TTL)
+                .cloned()
+        };
+        if let Some(e) = cached {
+            let mut r = state.result.lock().unwrap();
+            r.total_files = e.total_files;
+            r.root_size = e.root_size;
+            r.reclaimable = e.reclaimable;
+            r.groups = e.groups;
+            drop(r);
+            state.set_phase(state::IDLE);
+            state.set_progress(0, 0);
+            state.bump_version();
+            return;
+        }
+    }
 
     // Fase 1 — enumerar todos os ficheiros regulares não vazios.
     {
@@ -74,9 +98,10 @@ pub fn run(state: &AppState) {
         });
     }
 
+    let total_files = all.len();
     {
         let mut r = state.result.lock().unwrap();
-        r.total_files = all.len();
+        r.total_files = total_files;
         r.root_size = root_size;
     }
 
@@ -91,11 +116,26 @@ pub fn run(state: &AppState) {
         .flat_map(|(_, v)| v)
         .collect();
 
-    state.set_phase(state::HASHING);
-    state.set_progress(0, candidates.len());
+    // Cache de hashes: separa os que já conhecemos (mtime+size inalterados)
+    // dos que precisam mesmo de ser hasheados.
+    let mut resolved: Vec<(String, FileInfo)> = Vec::new();
+    let mut need: Vec<FileInfo> = Vec::new();
+    {
+        let cache = state.hash_cache.lock().unwrap();
+        for f in candidates {
+            let mt = f.modified.unwrap_or(0);
+            match cache.get(&f.path) {
+                Some(e) if e.mtime == mt && e.size == f.size => resolved.push((e.hash.clone(), f)),
+                _ => need.push(f),
+            }
+        }
+    }
 
-    // Fase 3 — hash BLAKE3 dos candidatos em paralelo.
-    let hashed: Vec<(String, FileInfo)> = candidates
+    state.set_phase(state::HASHING);
+    state.set_progress(0, need.len());
+
+    // Fase 3 — hash BLAKE3 (só dos não-cacheados), em paralelo.
+    let fresh: Vec<(String, FileInfo)> = need
         .into_par_iter()
         .filter_map(|f| {
             let h = hash_file(Path::new(&f.path));
@@ -104,9 +144,20 @@ pub fn run(state: &AppState) {
         })
         .collect();
 
+    // Atualiza a cache de hashes com os recém-calculados.
+    {
+        let mut cache = state.hash_cache.lock().unwrap();
+        for (h, f) in &fresh {
+            cache.insert(
+                f.path.clone(),
+                state::HashEntry { mtime: f.modified.unwrap_or(0), size: f.size, hash: h.clone() },
+            );
+        }
+    }
+
     // Fase 4 — reagrupar por (tamanho, hash) e formar grupos de duplicados.
     let mut by_hash: HashMap<String, Vec<FileInfo>> = HashMap::new();
-    for (h, f) in hashed {
+    for (h, f) in resolved.into_iter().chain(fresh) {
         // a chave inclui o tamanho implicitamente (hash já o distingue)
         by_hash.entry(h).or_default().push(f);
     }
@@ -134,9 +185,19 @@ pub fn run(state: &AppState) {
 
     {
         let mut r = state.result.lock().unwrap();
-        r.groups = groups;
+        r.groups = groups.clone();
         r.reclaimable = reclaimable;
     }
+
+    // Guarda o resultado na cache (TTL = SCAN_TTL).
+    {
+        let mut c = state.scan_cache.lock().unwrap();
+        c.insert(
+            root_key,
+            state::CachedScan { ts: state::now(), total_files, root_size, reclaimable, groups },
+        );
+    }
+
     state.set_phase(state::IDLE);
     state.set_progress(0, 0);
     state.bump_version();

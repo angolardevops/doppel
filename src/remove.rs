@@ -179,6 +179,8 @@ fn prune_groups(state: &AppState, removed: &HashSet<String>) {
     r.groups.retain(|g| g.count > 1);
     r.reclaimable = r.groups.iter().map(|g| g.wasted).sum();
     drop(r);
+    // Invalida a cache de análise da pasta atual — o disco mudou.
+    state.scan_cache.lock().unwrap().remove(&state.root().to_string_lossy().into_owned());
     state.bump_version();
 }
 
@@ -354,7 +356,7 @@ mod tests {
         fs::write(root.join("impostor.txt"), b"BBBBBBBBBBBB content").unwrap(); // = tamanho de aN
 
         let st = mkstate(root.clone(), home.clone());
-        crate::scan::run(&st);
+        crate::scan::run_with(&st, false);
         assert_eq!(st.result.lock().unwrap().groups.len(), 2, "deve achar 2 grupos");
         let reclaim = st.result.lock().unwrap().reclaimable;
         assert_eq!(reclaim, 20 * 2 + 5000, "recuperável = 2*20 (A) + 5000 (B)");
@@ -397,6 +399,41 @@ mod tests {
 
         // Nunca apaga o último: seleciona ambos de B (b1 já não casa com b2 adulterado,
         // mas b1 sozinho seria o último) — via grupo, força manter 1.
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cache_and_procs() {
+        let home = tmp("home2");
+        let root = tmp("scan2");
+        fs::write(root.join("x1"), b"mesma coisa aqui").unwrap();
+        fs::write(root.join("x2"), b"mesma coisa aqui").unwrap();
+
+        let st = mkstate(root.clone(), home.clone());
+        crate::scan::run_with(&st, false);
+        assert_eq!(st.cache_count(), 1, "resultado deve ficar em cache");
+        assert!(st.cache_age(&root.to_string_lossy()).is_some());
+        assert_eq!(st.result.lock().unwrap().groups.len(), 1);
+        assert!(st.hash_cache.lock().unwrap().len() >= 2, "hashes devem ficar em cache");
+
+        // segunda análise sem forçar → serve da cache, mesmos grupos
+        crate::scan::run_with(&st, false);
+        assert_eq!(st.result.lock().unwrap().groups.len(), 1);
+
+        // limpar cache esvazia ambas
+        st.clear_caches();
+        assert_eq!(st.cache_count(), 0);
+        assert_eq!(st.hash_cache.lock().unwrap().len(), 0);
+
+        // top processos
+        let mut sys = st.proc_sys.lock().unwrap();
+        let snap = crate::procs::collect(&mut sys);
+        assert!(snap.ncpu >= 1);
+        assert!(!snap.top_mem.is_empty(), "deve listar processos");
+        assert!(snap.top_cpu.len() <= 10 && snap.top_mem.len() <= 10);
+        drop(sys);
+
         let _ = fs::remove_dir_all(&home);
         let _ = fs::remove_dir_all(&root);
     }

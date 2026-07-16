@@ -1,15 +1,20 @@
 //! Estado partilhado: raiz mutável, progresso de operações em tempo real,
 //! e a quarentena persistente (manifesto em disco).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 
 use crate::auth::Sessions;
 use crate::scan::DupGroup;
+
+/// Tempo de vida do resultado de análise em cache (segundos) — 30 minutos.
+pub const SCAN_TTL: u64 = 30 * 60;
 
 #[derive(Serialize, Default)]
 pub struct ScanResult {
@@ -101,6 +106,26 @@ impl Quarantine {
     }
 }
 
+// ---- Caches ---------------------------------------------------------------
+
+/// Resultado de análise em cache para uma pasta (com carimbo temporal).
+#[derive(Clone)]
+pub struct CachedScan {
+    pub ts: u64,
+    pub total_files: usize,
+    pub root_size: u64,
+    pub reclaimable: u64,
+    pub groups: Vec<DupGroup>,
+}
+
+/// Entrada da cache de hashes: identidade do ficheiro (mtime,size) → hash.
+#[derive(Clone)]
+pub struct HashEntry {
+    pub mtime: u64,
+    pub size: u64,
+    pub hash: String,
+}
+
 // ---- Estado global --------------------------------------------------------
 
 pub struct AppState {
@@ -121,6 +146,13 @@ pub struct AppState {
 
     pub sessions: Sessions,
     pub quarantine: Mutex<Quarantine>,
+
+    /// Cache do resultado de análise por pasta (TTL = SCAN_TTL).
+    pub scan_cache: Mutex<HashMap<String, CachedScan>>,
+    /// Cache de hashes por caminho (evita re-hashear ficheiros inalterados).
+    pub hash_cache: Mutex<HashMap<String, HashEntry>>,
+    /// `System` reutilizado para amostrar processos (CPU precisa de 2 amostras).
+    pub proc_sys: Mutex<System>,
 }
 
 impl AppState {
@@ -139,11 +171,32 @@ impl AppState {
             busy: AtomicBool::new(false),
             sessions: Sessions::new(),
             quarantine: Mutex::new(Quarantine::load(q_dir)),
+            scan_cache: Mutex::new(HashMap::new()),
+            hash_cache: Mutex::new(HashMap::new()),
+            proc_sys: Mutex::new(System::new()),
         }
     }
 
     pub fn root(&self) -> PathBuf {
         self.root.read().unwrap().clone()
+    }
+
+    /// Devolve a idade (s) do resultado em cache para `path`, se ainda fresco.
+    pub fn cache_age(&self, path: &str) -> Option<u64> {
+        let c = self.scan_cache.lock().unwrap();
+        c.get(path).map(|e| now().saturating_sub(e.ts)).filter(|age| *age < SCAN_TTL)
+    }
+
+    /// Nº de pastas com resultado em cache (fresco).
+    pub fn cache_count(&self) -> usize {
+        let c = self.scan_cache.lock().unwrap();
+        c.values().filter(|e| now().saturating_sub(e.ts) < SCAN_TTL).count()
+    }
+
+    /// Limpa ambas as caches (resultado + hashes).
+    pub fn clear_caches(&self) {
+        self.scan_cache.lock().unwrap().clear();
+        self.hash_cache.lock().unwrap().clear();
     }
 
     pub fn set_phase(&self, p: &str) {

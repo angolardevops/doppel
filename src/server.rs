@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, remove, scan, stats};
+use crate::{auth, browse, procs, remove, scan, stats};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const COOKIE: &str = "doppel_sess";
@@ -136,9 +136,18 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
                     }
                 }
             }
+            let force = body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
             spawn_op(state, req, 202, move |st| {
-                scan::run(&st);
+                scan::run_with(&st, force);
             });
+        }
+        (Method::Get, "/api/processes") => {
+            let mut sys = state.proc_sys.lock().unwrap();
+            respond_json(req, 200, &json!(procs::collect(&mut sys)));
+        }
+        (Method::Post, "/api/cache/clear") => {
+            state.clear_caches();
+            respond_json(req, 200, &json!({"ok": true}));
         }
         (Method::Post, "/api/clean") => {
             let paths = string_list(&read_body(&mut req), "paths");
@@ -242,6 +251,8 @@ fn status_json(state: &Arc<AppState>) -> Value {
         "root": state.root().to_string_lossy(),
         "mem": sys.mem,
         "disk": sys.disk,
+        "cache_count": state.cache_count(),
+        "cache_age": state.cache_age(&state.root().to_string_lossy()),
     })
 }
 
