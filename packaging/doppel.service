@@ -1,0 +1,26 @@
+# Serviço systemd (--user) para o Doppel: arranca no login e mantém a UI web
+# a servir numa porta fixa, em segundo plano (sem abrir o browser).
+#
+# Instalar:
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/doppel.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now doppel.service
+#   # abre http://127.0.0.1:47654 no browser e faz login
+#
+# (opcional) arrancar mesmo sem sessão iniciada:  loginctl enable-linger "$USER"
+
+[Unit]
+Description=Doppel — detector/removedor de ficheiros duplicados (UI web local)
+Documentation=https://github.com/angolardevops/doppel
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/doppel --port 47654 --no-browser
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

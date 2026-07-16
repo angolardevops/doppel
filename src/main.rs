@@ -24,22 +24,65 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         eprintln!("Doppel — detector/removedor de ficheiros duplicados\n");
-        eprintln!("  uso: doppel [PASTA]");
+        eprintln!("  uso: doppel [OPÇÕES] [PASTA]");
         eprintln!("  (sem PASTA usa o home do utilizador que faz login)\n");
-        eprintln!("Abre uma UI web numa porta alta aleatória, protegida por login do");
-        eprintln!("sistema (PAM). Duplicados podem ir para quarentena (reversível) ou ser");
-        eprintln!("apagados; a remoção é sempre verificada byte-a-byte (certeza 100%).\n");
+        eprintln!("Opções:");
+        eprintln!("  --port <N>     porta fixa (por omissão: alta e aleatória)");
+        eprintln!("  --no-browser   não abrir o browser (útil para serviço/systemd)");
+        eprintln!("  -h, --help     esta ajuda\n");
+        eprintln!("Abre uma UI web protegida por login do sistema (PAM). Duplicados podem");
+        eprintln!("ir para quarentena (reversível) ou ser apagados; a remoção é sempre");
+        eprintln!("verificada byte-a-byte (certeza 100%).\n");
         eprintln!("Env: DOPPEL_PAM_SERVICE (serviço PAM, por omissão 'login').");
         return;
+    }
+
+    // Parsing simples de argumentos: --port <N>, --no-browser e PASTA posicional.
+    let mut cli_port: Option<u16> = None;
+    let mut no_browser = false;
+    let mut folder: Option<String> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--no-browser" => no_browser = true,
+            "--port" => {
+                i += 1;
+                match args.get(i).and_then(|v| v.parse::<u16>().ok()) {
+                    Some(p) => cli_port = Some(p),
+                    None => {
+                        eprintln!("erro: --port precisa de um número de porta (1-65535)");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            s if s.starts_with("--port=") => {
+                match s["--port=".len()..].parse::<u16>() {
+                    Ok(p) => cli_port = Some(p),
+                    Err(_) => {
+                        eprintln!("erro: --port precisa de um número de porta (1-65535)");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            s if !s.starts_with('-') && folder.is_none() => folder = Some(s.to_string()),
+            _ => {}
+        }
+        i += 1;
+    }
+    // Env como alternativa às flags (útil na unit systemd).
+    if cli_port.is_none() {
+        if let Some(p) = std::env::var("DOPPEL_PORT").ok().and_then(|v| v.parse().ok()) {
+            cli_port = Some(p);
+        }
+    }
+    if std::env::var("DOPPEL_NO_BROWSER").is_ok() {
+        no_browser = true;
     }
 
     let (run_user, run_home) = auth::current_user();
 
     // Raiz inicial: argumento > home do utilizador.
-    let root = args
-        .iter()
-        .skip(1)
-        .find(|a| !a.starts_with('-'))
+    let root = folder
         .map(PathBuf::from)
         .and_then(|p| std::fs::canonicalize(&p).ok())
         .filter(|p| p.is_dir())
@@ -47,8 +90,12 @@ fn main() {
 
     let q_dir = state::quarantine_dir(&run_home);
 
-    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
-        .expect("não foi possível abrir um socket local");
+    let bind_port = cli_port.unwrap_or(0); // 0 = porta alta aleatória do SO
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, bind_port)))
+        .unwrap_or_else(|e| {
+            eprintln!("erro: não foi possível abrir 127.0.0.1:{bind_port}: {e}");
+            std::process::exit(1);
+        });
     let port = listener.local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{port}/");
 
@@ -60,7 +107,9 @@ fn main() {
     println!("  raiz:       {}", state.root().display());
     println!("  UI:         {url}");
     println!("  (faz login com a tua password do sistema · Ctrl+C para sair)\n");
-    open_browser(&url);
+    if !no_browser {
+        open_browser(&url);
+    }
 
     server::serve(server, state);
 }

@@ -127,11 +127,26 @@ purga da quarentena) — mover para quarentena é só um passo intermédio de se
 
 ## Configuração
 
-| Variável | Por omissão | Descrição |
+| Opção / Variável | Por omissão | Descrição |
 |---|---|---|
+| `[PASTA]` | home do utilizador | Pasta inicial a analisar (`doppel /caminho`). |
+| `--port <N>` / `DOPPEL_PORT` | alta e aleatória | Porta fixa em que a UI escuta. |
+| `--no-browser` / `DOPPEL_NO_BROWSER` | (abre) | Não abrir o browser — útil para serviço/systemd. |
 | `DOPPEL_PAM_SERVICE` | `login` | Serviço PAM usado na autenticação (ex.: `login`, `su`, `sudo`). |
 
-Argumento posicional opcional: a pasta inicial a analisar (`doppel /caminho`).
+## Correr como serviço (systemd `--user`)
+
+Para manter o Doppel sempre a servir numa porta fixa e a arrancar no login:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/doppel.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now doppel.service
+```
+
+Depois abre **http://127.0.0.1:47654** e faz login. Edita o ficheiro para mudar a porta.
+Para que arranque mesmo sem sessão iniciada: `loginctl enable-linger "$USER"`.
 
 ---
 
