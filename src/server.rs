@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, procs, remove, scan, stats};
+use crate::{auth, browse, procs, remove, scan, stats, sysmon};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const COOKIE: &str = "doppel_sess";
@@ -144,6 +144,14 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Get, "/api/processes") => {
             let mut sys = state.proc_sys.lock().unwrap();
             respond_json(req, 200, &json!(procs::collect(&mut sys)));
+        }
+        (Method::Get, "/api/monitor") => {
+            let mut sys = state.proc_sys.lock().unwrap();
+            sys.refresh_cpu_all();
+            sys.refresh_memory();
+            let procs = procs::collect(&mut sys); // faz refresh_processes
+            let mon = sysmon::snapshot(&sys);
+            respond_json(req, 200, &json!({ "mon": mon, "procs": procs }));
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();

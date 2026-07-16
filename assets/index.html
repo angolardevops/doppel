@@ -20,7 +20,7 @@
     -webkit-font-smoothing:antialiased;
   }
   code,.mono{font-family:ui-monospace,"JetBrains Mono","SF Mono",Menlo,monospace}
-  .wrap{max-width:1200px;margin:0 auto;padding:24px 22px 90px}
+  .wrap{max-width:1580px;margin:0 auto;padding:24px 30px 40px}
   a{color:var(--acc)}
   button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt);
     padding:9px 15px;border-radius:10px;transition:.15s;font-weight:600}
@@ -160,6 +160,36 @@
   .ptab .pbar span{position:relative;z-index:1}
   .ptab tr:hover td{background:#151d2b}
 
+  /* dashboard de monitorização */
+  .kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:linear-gradient(180deg,#131a26,#0f1520);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+  .kpi .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px;font-weight:700;display:flex;gap:6px;align-items:center}
+  .kpi .v{font-size:23px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi .sub{color:var(--mut);font-size:11px;margin-top:2px}
+  .kpi .bar{height:6px;margin-top:9px}
+  .panelbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:16px}
+  .panelbox > .systitle{display:flex;align-items:center;gap:8px}
+  .panelbox .inner{padding:15px}
+
+  /* heatmap de cores */
+  .heat{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:7px;padding:15px}
+  .cell{border-radius:8px;padding:8px 4px;text-align:center;border:1px solid #ffffff10;position:relative;transition:background .5s}
+  .cell .ci{font-size:10px;color:#ffffffb0;font-weight:700}
+  .cell .cv{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+  .cell.off{background:#0c1119 !important;color:var(--dim);border-style:dashed}
+  .cell.off .cv{color:var(--dim)}
+  .heatlegend{display:flex;align-items:center;gap:8px;padding:0 15px 14px;color:var(--mut);font-size:11px}
+  .heatlegend .grad{flex:1;max-width:220px;height:8px;border-radius:5px;
+    background:linear-gradient(90deg,#1e6b4d,#57e389,#ffb454,#ff6b7d)}
+
+  /* rodapé */
+  footer{margin-top:26px;padding-top:18px;border-top:1px solid var(--line);display:flex;gap:10px;
+    align-items:center;justify-content:center;flex-wrap:wrap;color:var(--dim);font-size:13px}
+  footer .brand{font-weight:700;color:var(--mut)}
+  footer a{color:var(--acc);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+  footer .dot{opacity:.4}
+
   .ov{position:fixed;inset:0;background:#04070ccc;display:none;place-items:center;z-index:40;backdrop-filter:blur(3px)}
   .ov.on{display:grid}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:520px;width:92%;padding:22px}
@@ -270,10 +300,31 @@
 
   <!-- ===== TAB: SISTEMA ===== -->
   <div id="view-sys" style="display:none">
-    <div class="hint" id="sysinfo">Top 10 processos por CPU e por memória · <span id="ncpu"></span> · atualiza a cada 2s</div>
+    <div class="hint">Monitorização do host em tempo real · atualiza a cada 2s</div>
+
+    <!-- KPIs -->
+    <div class="kgrid" id="kpis"></div>
+
+    <!-- Heatmap de cores -->
+    <div class="panelbox">
+      <div class="systitle">🌡️ Mapa de calor da CPU <span id="coreinfo" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
+      <div class="heat" id="heat"></div>
+      <div class="heatlegend"><span>ocioso</span><div class="grad"></div><span>saturado</span>
+        <span style="margin-left:12px">▨ core desligado</span></div>
+    </div>
+
+    <!-- Partições / FHS -->
+    <div class="panelbox">
+      <div class="systitle">💽 Partições &amp; sistemas de ficheiros</div>
+      <table class="ptab"><thead><tr><th>Ponto de montagem</th><th>Tipo</th><th class="num">Tamanho</th>
+        <th style="width:34%">Ocupação</th><th class="num">Livre</th></tr></thead>
+        <tbody id="part-body"></tbody></table>
+    </div>
+
+    <!-- Top processos -->
     <div class="syscols">
       <div class="syscol">
-        <div class="systitle">🔥 Top CPU</div>
+        <div class="systitle">🔥 Top CPU <span id="ncpu" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
         <table class="ptab"><thead><tr><th>Processo</th><th>Serviço</th><th class="num">CPU</th><th class="num">Memória</th></tr></thead>
           <tbody id="cpu-body"></tbody></table>
       </div>
@@ -284,6 +335,14 @@
       </div>
     </div>
   </div>
+
+  <footer>
+    <span class="brand">◈ Doppel</span>
+    <span class="dot">·</span>
+    <span>by <b style="color:var(--mut)">ngolacloud</b></span>
+    <span class="dot">·</span>
+    <a href="https://github.com/angolardevops/doppel" target="_blank" rel="noopener">github.com/angolardevops/doppel</a>
+  </footer>
 </div></div>
 
 <!-- modal -->
@@ -345,7 +404,7 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-quar').style.display = t==='quar'?'block':'none';
   $('#view-sys').style.display = t==='sys'?'block':'none';
   if(t==='quar') loadQuar();
-  if(t==='sys'){ pollProcs(); if(!window.__procTimer) window.__procTimer=setInterval(pollProcs,2000); }
+  if(t==='sys'){ pollMonitor(); if(!window.__procTimer) window.__procTimer=setInterval(pollMonitor,2000); }
   else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
 };
 
@@ -430,16 +489,55 @@ $('#clearcache').onclick = async ()=>{
   toast('Cache limpa', false); VERSION=-1; poll();
 };
 
-// ---- processos (tab Sistema) ----
-async function pollProcs(){
-  let s; try{ s = await (await fetch('/api/processes')).json(); }catch(e){ return; }
-  const nc = Math.max(1, s.ncpu||1);
-  $('#ncpu').textContent = nc+' cores · CPU em % do sistema total';
-  // bar relativo ao máximo do próprio top; valor mostrado = % do sistema (÷ cores)
-  const maxCpu = Math.max(1, ...s.top_cpu.map(p=>p.cpu));
-  const maxMem = Math.max(1, ...s.top_mem.map(p=>p.mem));
+// ---- monitorização (tab Sistema) ----
+function fmtUptime(s){ s=Number(s||0); const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m'; }
+function heatColor(u){ u=Math.max(0,Math.min(100,u)); return `hsl(${(150-u*1.5).toFixed(0)},62%,${(26+u*0.14).toFixed(0)}%)`; }
+
+async function pollMonitor(){
+  let d; try{ d = await (await fetch('/api/monitor')).json(); }catch(e){ return; }
+  renderKpis(d.mon); renderHeat(d.mon); renderParts(d.mon);
+  const s=d.procs, nc=Math.max(1,s.ncpu||1);
+  $('#ncpu').textContent = nc+' cores · % do sistema';
+  const maxCpu=Math.max(1,...s.top_cpu.map(p=>p.cpu)), maxMem=Math.max(1,...s.top_mem.map(p=>p.mem));
   $('#cpu-body').innerHTML = s.top_cpu.map(p=>procRow(p,'cpu',maxCpu,maxMem,nc)).join('');
   $('#mem-body').innerHTML = s.top_mem.map(p=>procRow(p,'mem',maxCpu,maxMem,nc)).join('');
+}
+function kpi(k,icon,v,sub,barPct,barCls){
+  return `<div class="kpi"><div class="k">${icon} ${k}</div><div class="v">${v}</div><div class="sub">${sub||''}</div>
+    ${barPct!=null?`<div class="bar ${barCls||'mem'}"><i style="width:${Math.min(100,barPct).toFixed(0)}%"></i></div>`:''}</div>`;
+}
+function renderKpis(m){
+  const cards=[];
+  cards.push(kpi('CPU','🔥',m.cpu.toFixed(1)+'%',`load ${m.load[0].toFixed(2)} · ${m.load[1].toFixed(2)} · ${m.load[2].toFixed(2)}`, m.cpu,'mem'));
+  cards.push(kpi('RAM','🧠',fmt(m.mem_used),`de ${fmt(m.mem_total)} · ${fmt(m.mem_available)} livre`, m.mem_total?m.mem_used/m.mem_total*100:0,'mem'));
+  if(m.swap_total>0) cards.push(kpi('Swap','💾',fmt(m.swap_used),`de ${fmt(m.swap_total)}`, m.swap_used/m.swap_total*100,'disk'));
+  const t=m.temp_max; cards.push(kpi('Temperatura','🌡️', t!=null?t.toFixed(0)+'°C':'—', t!=null?(t>=80?'quente':t>=60?'morno':'ok'):'sem sensores', t!=null?t:null,'disk'));
+  if(m.gpus && m.gpus.length){ const g=m.gpus[0];
+    cards.push(kpi('GPU'+(m.gpus.length>1?` (${m.gpus.length})`:''),'🎮', g.util!=null?g.util.toFixed(0)+'%':'—',
+      esc(g.name)+(g.mem_total?` · ${fmt(g.mem_used)}/${fmt(g.mem_total)}`:'')+(g.temp!=null?` · ${g.temp.toFixed(0)}°C`:''),
+      g.util!=null?g.util:null,'mem')); }
+  else cards.push(kpi('GPU','🎮','—','sem GPU detetada',null));
+  cards.push(kpi('Uptime','⏱️',fmtUptime(m.uptime),`${m.cores_online} cores ativos`,null));
+  $('#kpis').innerHTML = cards.join('');
+}
+function renderHeat(m){
+  let html='';
+  m.cores.forEach(c=>{ html+=`<div class="cell" style="background:${heatColor(c.usage)}">
+    <div class="ci">C${c.id}${c.freq?` · ${(c.freq/1000).toFixed(1)}G`:''}</div><div class="cv">${c.usage.toFixed(0)}%</div></div>`; });
+  const off=Math.max(0,m.cores_total-m.cores_online);
+  for(let i=0;i<off;i++) html+=`<div class="cell off"><div class="ci">off</div><div class="cv">—</div></div>`;
+  $('#heat').innerHTML=html;
+  $('#coreinfo').textContent = `${m.cores_online} de ${m.cores_total} cores online · média ${m.cpu.toFixed(0)}%`;
+}
+function renderParts(m){
+  $('#part-body').innerHTML = (m.parts||[]).map(p=>{ const pct=p.total?p.used/p.total*100:0;
+    const cls=pct>=90?'#ff6b7d':pct>=75?'#ffb454':'#3ddad7';
+    return `<tr><td class="mono">${esc(p.mount)}${p.removable?' <span class="psvc">⏏</span>':''}</td>
+      <td class="psvc mono">${esc(p.fs)}</td><td class="num">${fmt(p.total)}</td>
+      <td><div class="bar" style="margin:0"><i style="width:${pct.toFixed(0)}%;background:${cls}"></i></div>
+        <div class="psvc" style="margin-top:3px">${fmt(p.used)} · ${pct.toFixed(0)}%</div></td>
+      <td class="num">${fmt(p.free)}</td></tr>`; }).join('') || '<tr><td colspan="5" class="psvc" style="padding:16px">sem partições</td></tr>';
 }
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);

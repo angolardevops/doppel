@@ -13,6 +13,7 @@ mod scan;
 mod server;
 mod state;
 mod stats;
+mod sysmon;
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;

@@ -466,6 +466,15 @@ mod tests {
         assert!(snap.ncpu >= 1);
         assert!(!snap.top_mem.is_empty(), "deve listar processos");
         assert!(snap.top_cpu.len() <= 10 && snap.top_mem.len() <= 10);
+
+        // monitorização do host
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+        let mon = crate::sysmon::snapshot(&sys);
+        assert!(!mon.cores.is_empty(), "deve haver cores");
+        assert!(mon.cores_total >= mon.cores_online && mon.cores_online >= 1);
+        assert!(mon.mem_total > 0);
+        assert!(!mon.parts.is_empty(), "deve listar partições");
         drop(sys);
 
         let _ = fs::remove_dir_all(&home);
