@@ -63,7 +63,8 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 📁 **Gestor de ficheiros** | Navegar, criar pasta/ficheiro, renomear, `chmod`, apagar — com as permissões do utilizador. |
 | 🔒 **Wizard de elevação** | Quando uma operação falha por falta de permissões, um wizard pede a password (verificada por PAM) e repete via `sudo`; `chown` corre sempre elevado. |
 | 👥 **Gestão de utilizadores** | Listar utilizadores/grupos; criar, mudar password/shell, adicionar a grupos, bloquear e apagar — via `useradd`/`usermod`/`chpasswd`/`userdel` no wizard `sudo`. |
-| ⚙️ **Serviços & timers** | Listar serviços (estado/arranque) e timers; iniciar/parar/reiniciar/ativar/desativar via wizard `sudo`. |
+| ⚙️ **Serviços & timers** | Listar serviços (estado/arranque) e timers; iniciar/parar/reiniciar/ativar/desativar via wizard `sudo`; editor de crontab do utilizador. |
+| 📦 **Pacotes (APT)** | Listar atualizáveis e pesquisar; update/upgrade/install/remove via wizard `sudo`, com a saída mostrada. |
 | 📜 **Logs** | Ver o journal (`journalctl`) com filtro por unit, prioridade e texto; auto-refresh. |
 | 🌐 **Rede** | Interfaces/IPs (`ip`) e sockets (`ss`) — só leitura. |
 | 🗄️ **Discos** | Árvore de dispositivos (`lsblk`), uso por pasta (`du`) e S.M.A.R.T. (`smartctl`, se instalado). |
