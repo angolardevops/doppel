@@ -20,7 +20,6 @@ Type=simple
 ExecStart=%h/.cargo/bin/doppel --port 47654 --no-browser
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
 
 [Install]
 WantedBy=default.target
