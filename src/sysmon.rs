@@ -1,8 +1,43 @@
 //! Monitorização do host em tempo real: CPU (global + por-core + online/offline),
 //! RAM/swap, load, uptime, temperaturas, GPU (NVIDIA/AMD) e partições (FHS).
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde::Serialize;
 use sysinfo::{Components, Disks, System};
+
+use crate::state::{now, AppState, Sample};
+
+/// Amostra KPIs periodicamente para o histórico (corre numa thread dedicada).
+/// CPU/RAM/temperatura em cada tick (barato); GPU a cada 3 ticks (nvidia-smi
+/// gera um processo, por isso menos frequente).
+pub fn sample_loop(state: &Arc<AppState>) {
+    let mut sys = System::new();
+    let mut tick: u64 = 0;
+    let mut last_gpu: f32 = 0.0;
+    loop {
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+        let cpu = sys.global_cpu_usage();
+        let mem = if sys.total_memory() > 0 {
+            sys.used_memory() as f32 / sys.total_memory() as f32 * 100.0
+        } else {
+            0.0
+        };
+        let temp = Components::new_with_refreshed_list()
+            .iter()
+            .map(|c| c.temperature())
+            .filter(|t| t.is_finite() && *t > 0.0)
+            .fold(0.0f32, f32::max);
+        if tick % 3 == 0 {
+            last_gpu = gpu_snapshot().first().and_then(|g| g.util).unwrap_or(0.0);
+        }
+        state.push_sample(Sample { t: now(), cpu, mem, temp, gpu: last_gpu });
+        tick += 1;
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
 
 #[derive(Serialize)]
 pub struct Core {

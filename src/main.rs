@@ -7,6 +7,7 @@
 
 mod auth;
 mod browse;
+mod fsops;
 mod procs;
 mod remove;
 mod scan;
@@ -109,6 +110,12 @@ fn main() {
 
     let server = Server::from_listener(listener, None).expect("falha ao iniciar o servidor HTTP");
     let state = Arc::new(AppState::new(run_user.clone(), run_home, root, q_dir));
+
+    // Amostrador de KPIs em background (para os gráficos históricos).
+    {
+        let st = Arc::clone(&state);
+        std::thread::spawn(move || sysmon::sample_loop(&st));
+    }
 
     println!("\n  ✦ Doppel");
     println!("  utilizador: {run_user}");

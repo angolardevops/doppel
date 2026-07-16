@@ -8,11 +8,12 @@
 //!
 //! Regra invariante: nunca remove/quarentena o último membro de um grupo.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
+use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::state::{self, AppState, QEntry};
@@ -39,94 +40,102 @@ pub struct Skip {
     pub reason: String,
 }
 
+/// Uma unidade de trabalho: apagar/quarentenar `path` (tamanho `size`, hash
+/// conhecido), verificando byte-a-byte contra `keeper` primeiro.
+struct PlanItem {
+    path: String,
+    size: u64,
+    hash: String,
+    keeper: String,
+}
+
+enum Outcome {
+    Done { path: String, size: u64, quarantined: bool },
+    Skip(Skip),
+}
+
 /// Apaga ou põe em quarentena os `paths` indicados (duplicados do último scan).
+///
+/// Memória O(selecionados) — constrói só o plano dos ficheiros escolhidos e o
+/// seu guardião (nunca a matriz N² de membros por ficheiro). O trabalho corre
+/// num pool pequeno e dedicado (I/O-bound) para não saturar o sistema.
 pub fn operate(state: &AppState, paths: Vec<String>, mode: Mode) -> OpReport {
     let mut report = OpReport::default();
-    let mut to_process: HashSet<String> = paths.into_iter().collect();
-
-    // Snapshot: path -> (size, membros do grupo) e lista de grupos.
-    let (info, groups_members): (HashMap<String, (u64, Vec<String>)>, Vec<Vec<String>>) = {
-        let r = state.result.lock().unwrap();
-        let mut m = HashMap::new();
-        let mut all = Vec::new();
-        for g in &r.groups {
-            let members: Vec<String> = g.files.iter().map(|f| f.path.clone()).collect();
-            for f in &g.files {
-                m.insert(f.path.clone(), (g.size, members.clone()));
-            }
-            all.push(members);
-        }
-        (m, all)
-    };
-
-    // Garante ≥1 cópia por grupo: se todos os membros foram marcados, mantém o 1º.
-    for members in &groups_members {
-        if members.iter().all(|m| to_process.contains(m)) {
-            if let Some(first) = members.first() {
-                to_process.remove(first);
-            }
-        }
+    let sel: HashSet<String> = paths.into_iter().collect();
+    if sel.is_empty() {
+        return report;
     }
 
-    state.set_phase(if mode == Mode::Delete { state::DELETING } else { state::QUARANTINING });
-    state.set_progress(0, to_process.len());
-
-    let mut done: HashSet<String> = HashSet::new();
-
-    for path in &to_process {
-        state.tick();
-        let (size, members) = match info.get(path) {
-            Some(v) => v,
-            None => {
-                report.skipped.push(skip(path, "fora de qualquer grupo de duplicados conhecido"));
-                continue;
+    // Plano: percorre os grupos UMA vez e recolhe só os itens selecionados que
+    // têm um guardião seguro. Nunca clona a lista de membros por ficheiro.
+    let plan: Vec<PlanItem> = {
+        let r = state.result.lock().unwrap();
+        let mut plan = Vec::new();
+        for g in &r.groups {
+            if !g.files.iter().any(|f| sel.contains(&f.path)) {
+                continue; // grupo não tocado
             }
-        };
-
-        // Guardião: um membro do grupo que fica, existe em disco e não foi já tratado.
-        let keeper = members.iter().find(|m| {
-            *m != path && !to_process.contains(*m) && !done.contains(*m) && Path::new(m).exists()
-        });
-        let keeper = match keeper {
-            Some(k) => k,
-            None => {
-                report.skipped.push(skip(path, "sem guardião seguro — seria o último do grupo, mantido"));
-                continue;
-            }
-        };
-
-        // Certeza 100%: comparação byte-a-byte contra o guardião.
-        match bytes_equal(Path::new(path), Path::new(keeper), *size) {
-            Ok(true) => {}
-            Ok(false) => {
-                report.skipped.push(skip(path, "conteúdo divergente na verificação byte-a-byte — mantido"));
-                continue;
-            }
-            Err(e) => {
-                report.skipped.push(skip(path, &format!("falha a verificar: {e}")));
-                continue;
+            let all_selected = g.files.iter().all(|f| sel.contains(&f.path));
+            // guardião: um membro NÃO selecionado; se todos foram, mantém o 1º.
+            let keeper = if all_selected {
+                g.files.first().map(|f| f.path.clone())
+            } else {
+                g.files.iter().find(|f| !sel.contains(&f.path)).map(|f| f.path.clone())
+            };
+            let keeper = match keeper {
+                Some(k) => k,
+                None => continue,
+            };
+            for f in &g.files {
+                if sel.contains(&f.path) && f.path != keeper {
+                    plan.push(PlanItem {
+                        path: f.path.clone(),
+                        size: g.size,
+                        hash: g.hash.clone(),
+                        keeper: keeper.clone(),
+                    });
+                }
             }
         }
+        plan
+    };
 
-        match mode {
-            Mode::Delete => match std::fs::remove_file(path) {
-                Ok(()) => {
-                    done.insert(path.clone());
-                    report.processed += 1;
-                    report.freed += *size;
-                    state.freed.fetch_add(*size, Ordering::Relaxed);
+    state.set_phase(if mode == Mode::Delete { state::DELETING } else { state::QUARANTINING });
+    state.set_progress(0, plan.len());
+
+    // Pool dedicado e pequeno: paralelo (I/O-bound) mas gentil com a CPU.
+    // stack_size explícito: o rayon divide recursivamente e os workers precisam
+    // de mais do que os 2 MB por omissão em planos grandes (senão: stack overflow).
+    let nthreads = std::thread::available_parallelism().map(|n| n.get().min(4)).unwrap_or(2);
+    let run = |it: &PlanItem| -> Outcome {
+        state.tick();
+        process_item(state, it, mode)
+    };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(nthreads)
+        .stack_size(8 * 1024 * 1024)
+        .build();
+    let outcomes: Vec<Outcome> = match pool {
+        Ok(pool) => pool.install(|| plan.par_iter().map(run).collect()),
+        Err(_) => plan.iter().map(run).collect(),
+    };
+
+    // Agregação serial (contadores e conjunto de removidos).
+    let mut done: HashSet<String> = HashSet::new();
+    for o in outcomes {
+        match o {
+            Outcome::Done { path, size, quarantined } => {
+                report.processed += 1;
+                if quarantined {
+                    report.quarantined += size;
+                } else {
+                    report.freed += size;
+                    state.freed.fetch_add(size, Ordering::Relaxed);
                     state.removed.fetch_add(1, Ordering::Relaxed);
                 }
-                Err(e) => report.skipped.push(skip(path, &format!("erro ao apagar: {e}"))),
-            },
-            Mode::Quarantine => match quarantine_move(state, path, *size) {
-                Ok(()) => {
-                    done.insert(path.clone());
-                    report.processed += 1;
-                    report.quarantined += *size;
-                }
-                Err(e) => report.skipped.push(skip(path, &format!("erro ao mover para quarentena: {e}"))),
-            },
+                done.insert(path);
+            }
+            Outcome::Skip(s) => report.skipped.push(s),
         }
     }
 
@@ -142,15 +151,34 @@ pub fn operate(state: &AppState, paths: Vec<String>, mode: Mode) -> OpReport {
     report
 }
 
-/// Move um ficheiro para a quarentena e regista-o no manifesto.
-fn quarantine_move(state: &AppState, path: &str, size: u64) -> std::io::Result<()> {
-    let hash = crate::scan::hash_file(Path::new(path)).unwrap_or_default();
+/// Verifica byte-a-byte e aplica (apagar/mover). Sem estado partilhado além de
+/// contadores atómicos e do Mutex da quarentena.
+fn process_item(state: &AppState, it: &PlanItem, mode: Mode) -> Outcome {
+    match bytes_equal(Path::new(&it.path), Path::new(&it.keeper), it.size) {
+        Ok(true) => {}
+        Ok(false) => return Outcome::Skip(skip(&it.path, "conteúdo divergente na verificação byte-a-byte — mantido")),
+        Err(e) => return Outcome::Skip(skip(&it.path, &format!("falha a verificar: {e}"))),
+    }
+    match mode {
+        Mode::Delete => match std::fs::remove_file(&it.path) {
+            Ok(()) => Outcome::Done { path: it.path.clone(), size: it.size, quarantined: false },
+            Err(e) => Outcome::Skip(skip(&it.path, &format!("erro ao apagar: {e}"))),
+        },
+        Mode::Quarantine => match quarantine_move(state, &it.path, it.size, &it.hash) {
+            Ok(()) => Outcome::Done { path: it.path.clone(), size: it.size, quarantined: true },
+            Err(e) => Outcome::Skip(skip(&it.path, &format!("erro ao mover para quarentena: {e}"))),
+        },
+    }
+}
+
+/// Move um ficheiro para a quarentena e regista-o (hash já conhecido — sem re-hash).
+fn quarantine_move(state: &AppState, path: &str, size: u64, hash: &str) -> std::io::Result<()> {
     let (id, dest) = {
         let mut q = state.quarantine.lock().unwrap();
         let id = q.alloc_id();
         (id, q.store_path(id))
     };
-    // rename rápido; se for cross-device, copia + remove.
+    // rename rápido; se for cross-device, copia (em streaming) + remove.
     match std::fs::rename(path, &dest) {
         Ok(()) => {}
         Err(_) => {
@@ -163,7 +191,7 @@ fn quarantine_move(state: &AppState, path: &str, size: u64) -> std::io::Result<(
         id,
         original: path.to_string(),
         size,
-        hash,
+        hash: hash.to_string(),
         ts: state::now(),
     });
     Ok(())
@@ -289,10 +317,11 @@ fn bytes_equal(a: &Path, b: &Path, expected: u64) -> std::io::Result<bool> {
     if fa.metadata()?.len() != expected || fb.metadata()?.len() != expected {
         return Ok(false);
     }
-    let mut ra = std::io::BufReader::with_capacity(128 * 1024, fa);
-    let mut rb = std::io::BufReader::with_capacity(128 * 1024, fb);
-    let mut ba = [0u8; 128 * 1024];
-    let mut bb = [0u8; 128 * 1024];
+    let mut ra = std::io::BufReader::with_capacity(64 * 1024, fa);
+    let mut rb = std::io::BufReader::with_capacity(64 * 1024, fb);
+    // buffers no HEAP (não na stack) — seguro sob paralelismo do rayon.
+    let mut ba = vec![0u8; 64 * 1024];
+    let mut bb = vec![0u8; 64 * 1024];
     loop {
         let na = read_full(&mut ra, &mut ba)?;
         let nb = read_full(&mut rb, &mut bb)?;
@@ -435,6 +464,60 @@ mod tests {
             rss_kb("VmHWM:") / 1024,
         );
         let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Medição de memória da remoção (ignorada): grupo enorme de idênticos.
+    ///   cargo test --release -- --ignored --nocapture mem_operate_big
+    #[test]
+    #[ignore]
+    fn mem_operate_big() {
+        let home = tmp("home5");
+        let root = tmp("scan5");
+        let n = 30_000usize;
+        for i in 0..n {
+            fs::write(root.join(format!("d{i:05}")), b"x").unwrap();
+        }
+        let st = mkstate(root.clone(), home.clone());
+        crate::scan::run_with(&st, false);
+        let all: Vec<String> = (0..n).map(|i| root.join(format!("d{i:05}")).to_string_lossy().into_owned()).collect();
+        println!("\n[memop] scan OK. antes RSS={} MB", rss_kb("VmRSS:") / 1024);
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        let rep = operate(&st, all, Mode::Delete);
+        println!(
+            "[memop] {} ficheiros apagados · RSS={} MB · pico(VmHWM)={} MB",
+            rep.processed,
+            rss_kb("VmRSS:") / 1024,
+            rss_kb("VmHWM:") / 1024
+        );
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn operate_large_group_all_selected_keeps_one() {
+        let home = tmp("home4");
+        let root = tmp("scan4");
+        // 500 ficheiros idênticos — antes gerava 500*500 clones de paths (O(N²)).
+        let n = 500usize;
+        for i in 0..n {
+            fs::write(root.join(format!("dup{i:04}.bin")), b"payload identico xyz").unwrap();
+        }
+        let st = mkstate(root.clone(), home.clone());
+        crate::scan::run_with(&st, false);
+        assert_eq!(st.result.lock().unwrap().groups.len(), 1);
+
+        // Seleciona TODOS → tem de quarentenar n-1 e manter exatamente 1.
+        let all: Vec<String> = (0..n)
+            .map(|i| root.join(format!("dup{i:04}.bin")).to_string_lossy().into_owned())
+            .collect();
+        let rep = operate(&st, all, Mode::Quarantine);
+        assert_eq!(rep.processed, n - 1, "deve mover n-1");
+        let remaining = fs::read_dir(&root).unwrap().count();
+        assert_eq!(remaining, 1, "deve sobrar exatamente 1 ficheiro");
+        assert_eq!(st.quarantine.lock().unwrap().entries.len(), n - 1);
+
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

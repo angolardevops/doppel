@@ -1,7 +1,7 @@
 //! Estado partilhado: raiz mutável, progresso de operações em tempo real,
 //! e a quarentena persistente (manifesto em disco).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -19,6 +19,19 @@ pub const SCAN_TTL: u64 = 30 * 60;
 pub const HASH_CACHE_CAP: usize = 300_000;
 /// Nº máximo de pastas com resultado em cache.
 pub const SCAN_CACHE_CAP: usize = 8;
+
+/// Nº máximo de amostras no histórico de KPIs (~10 min a 3s).
+pub const HISTORY_CAP: usize = 200;
+
+/// Uma amostra de KPIs no tempo (para os gráficos históricos).
+#[derive(Serialize, Clone, Copy)]
+pub struct Sample {
+    pub t: u64,
+    pub cpu: f32,
+    pub mem: f32,
+    pub temp: f32,
+    pub gpu: f32,
+}
 
 extern "C" {
     fn malloc_trim(pad: usize) -> i32;
@@ -169,6 +182,8 @@ pub struct AppState {
     pub hash_cache: Mutex<HashMap<String, HashEntry>>,
     /// `System` reutilizado para amostrar processos (CPU precisa de 2 amostras).
     pub proc_sys: Mutex<System>,
+    /// Histórico de KPIs para os gráficos (ring buffer).
+    pub history: Mutex<VecDeque<Sample>>,
 }
 
 impl AppState {
@@ -190,7 +205,17 @@ impl AppState {
             scan_cache: Mutex::new(HashMap::new()),
             hash_cache: Mutex::new(HashMap::new()),
             proc_sys: Mutex::new(System::new()),
+            history: Mutex::new(VecDeque::with_capacity(HISTORY_CAP)),
         }
+    }
+
+    /// Acrescenta uma amostra ao histórico, respeitando o limite.
+    pub fn push_sample(&self, s: Sample) {
+        let mut h = self.history.lock().unwrap();
+        if h.len() >= HISTORY_CAP {
+            h.pop_front();
+        }
+        h.push_back(s);
     }
 
     pub fn root(&self) -> PathBuf {

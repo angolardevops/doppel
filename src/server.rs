@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, procs, remove, scan, stats, sysmon};
+use crate::{auth, browse, fsops, procs, remove, scan, stats, sysmon};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const COOKIE: &str = "doppel_sess";
@@ -153,6 +153,38 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let mon = sysmon::snapshot(&sys);
             respond_json(req, 200, &json!({ "mon": mon, "procs": procs }));
         }
+        (Method::Get, "/api/history") => {
+            let h = state.history.lock().unwrap();
+            let series: Vec<_> = h.iter().collect();
+            respond_json(req, 200, &json!({ "samples": series }));
+        }
+        // ---- gestor de ficheiros (opera como o utilizador) ----
+        (Method::Get, "/api/fs/list") => {
+            let p = query_param(&query, "path")
+                .unwrap_or_else(|| state.run_home.to_string_lossy().into_owned());
+            respond_json(req, 200, &json!(fsops::list(std::path::Path::new(&p))));
+        }
+        (Method::Post, "/api/fs/mkdir") => {
+            let b = read_body(&mut req);
+            fs_result(req, fsops::mkdir(str_of(&b, "path"), str_of(&b, "name")));
+        }
+        (Method::Post, "/api/fs/mkfile") => {
+            let b = read_body(&mut req);
+            fs_result(req, fsops::mkfile(str_of(&b, "path"), str_of(&b, "name")));
+        }
+        (Method::Post, "/api/fs/rename") => {
+            let b = read_body(&mut req);
+            fs_result(req, fsops::rename(str_of(&b, "path"), str_of(&b, "name")));
+        }
+        (Method::Post, "/api/fs/chmod") => {
+            let b = read_body(&mut req);
+            fs_result(req, fsops::chmod(str_of(&b, "path"), str_of(&b, "mode")));
+        }
+        (Method::Post, "/api/fs/delete") => {
+            let b = read_body(&mut req);
+            let rec = b.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+            fs_result(req, fsops::delete(str_of(&b, "path"), rec));
+        }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();
             respond_json(req, 200, &json!({"ok": true}));
@@ -270,6 +302,18 @@ fn read_body(req: &mut Request) -> Value {
     let mut buf = String::new();
     let _ = std::io::Read::read_to_string(req.as_reader(), &mut buf);
     serde_json::from_str(&buf).unwrap_or(Value::Null)
+}
+
+fn str_of<'a>(body: &'a Value, key: &str) -> &'a str {
+    body.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+/// Responde a uma operação de ficheiros: 200 {ok} ou 400 {error}.
+fn fs_result(req: Request, r: Result<(), String>) {
+    match r {
+        Ok(()) => respond_json(req, 200, &json!({"ok": true})),
+        Err(e) => respond_json(req, 400, &json!({"error": e})),
+    }
 }
 
 fn string_list(body: &Value, key: &str) -> Vec<String> {
