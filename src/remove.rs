@@ -521,6 +521,18 @@ mod tests {
     }
 
     #[test]
+    fn users_list_e_validacao() {
+        let l = crate::users::list();
+        assert!(!l.users.is_empty(), "deve listar utilizadores");
+        assert!(l.users.iter().any(|u| u.name == "root" && u.uid == 0), "deve conter root");
+        assert!(!l.groups.is_empty(), "deve listar grupos");
+        // validação: username inválido → erro sem correr sudo
+        assert!(crate::users::create("walter", "", "Bad Name", "", "", true, "", "").is_err());
+        assert!(crate::users::set_password("walter", "", "0bad", "x").is_err());
+        assert!(crate::users::modify("walter", "", "walter", "shell", "relativo/sh").is_err());
+    }
+
+    #[test]
     fn elevate_valida_input_sem_correr_sudo() {
         // password vazia → erro imediato (antes de PAM/sudo)
         assert!(crate::elevate::mkdir("walter", "", "/tmp", "x").is_err());

@@ -10,7 +10,13 @@ use std::process::{Command, Stdio};
 use crate::auth;
 
 /// Verifica a password por PAM e corre `argv` como root via sudo.
-fn sudo_exec(user: &str, password: &str, argv: &[&str]) -> Result<(), String> {
+pub(crate) fn sudo_exec(user: &str, password: &str, argv: &[&str]) -> Result<(), String> {
+    sudo_exec_stdin(user, password, argv, &[])
+}
+
+/// Como `sudo_exec`, mas envia `extra` ao stdin do comando (a seguir à password
+/// do sudo). Usado por comandos que lêem de stdin (ex.: `chpasswd`).
+pub(crate) fn sudo_exec_stdin(user: &str, password: &str, argv: &[&str], extra: &[u8]) -> Result<(), String> {
     if password.is_empty() {
         return Err("password obrigatória".into());
     }
@@ -30,7 +36,11 @@ fn sudo_exec(user: &str, password: &str, argv: &[&str]) -> Result<(), String> {
         .map_err(|e| format!("sudo indisponível: {e}"))?;
 
     if let Some(mut stdin) = child.stdin.take() {
+        // sudo -S lê a password até à 1ª newline; o resto vai para o comando.
         let _ = stdin.write_all(format!("{password}\n").as_bytes());
+        if !extra.is_empty() {
+            let _ = stdin.write_all(extra);
+        }
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if out.status.success() {

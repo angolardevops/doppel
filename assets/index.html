@@ -205,6 +205,16 @@
   #term{width:100%;height:100%}
   .xterm{height:100%}
 
+  /* utilizadores */
+  #ucreate{display:none;margin-top:12px}
+  #ucreate.on{display:block}
+  .urow2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center}
+  .uchk{display:flex;align-items:center;gap:7px;color:var(--mut);font-size:13px}
+  .uchk input{width:16px;height:16px;accent-color:var(--acc)}
+  .ubadge{font-size:10px;font-weight:800;padding:1px 6px;border-radius:5px;background:#1c2636;color:var(--dim);margin-left:6px}
+  .gchip{display:inline-block;font-size:11px;background:#141d2b;border:1px solid var(--line);border-radius:6px;
+    padding:1px 6px;margin:1px 3px 1px 0;color:var(--mut)}
+
   /* gestor de ficheiros */
   .fname{font-weight:600;cursor:pointer}
   .fname:hover{color:var(--acc)}
@@ -257,6 +267,7 @@
     <div class="tab on" data-tab="dups" onclick="switchTab('dups')">Duplicados</div>
     <div class="tab" data-tab="quar" onclick="switchTab('quar')">Quarentena <span class="n" id="qtabn">0</span></div>
     <div class="tab" data-tab="files" onclick="switchTab('files')">Ficheiros</div>
+    <div class="tab" data-tab="users" onclick="switchTab('users')">Utilizadores</div>
     <div class="tab" data-tab="term" onclick="switchTab('term')">Terminal</div>
     <div class="tab" data-tab="sys" onclick="switchTab('sys')">Sistema</div>
   </div>
@@ -386,6 +397,36 @@
     </div>
   </div>
 
+  <!-- ===== TAB: UTILIZADORES ===== -->
+  <div id="view-users" style="display:none">
+    <div class="picker">
+      <div class="row">
+        <div class="info" style="flex:1;color:var(--mut);font-size:13px">Utilizadores do sistema · alterações via <b>sudo</b> (wizard de password)</div>
+        <button id="ushowsys" class="btn-ghost">👁 Mostrar do sistema</button>
+        <button id="unew" class="btn-primary">➕ Novo utilizador</button>
+      </div>
+      <div id="ucreate" class="dirlist" style="padding:14px">
+        <div class="urow2">
+          <input id="uc-name" placeholder="username" />
+          <input id="uc-full" placeholder="nome completo" />
+          <input id="uc-shell" placeholder="/bin/bash" />
+          <input id="uc-groups" placeholder="grupos (ex.: sudo,docker)" />
+          <input id="uc-pass" type="password" placeholder="password inicial (opcional)" />
+          <label class="uchk"><input type="checkbox" id="uc-home" checked> criar home</label>
+        </div>
+        <div class="row" style="margin-top:10px;justify-content:flex-end">
+          <button id="uc-cancel" class="btn-ghost">Cancelar</button>
+          <button id="uc-ok" class="btn-primary">Criar (pede password admin)</button>
+        </div>
+      </div>
+    </div>
+    <div class="panelbox">
+      <table class="ptab"><thead><tr><th>Utilizador</th><th class="num">UID</th><th>Shell</th>
+        <th>Grupos</th><th style="width:210px">Ações</th></tr></thead>
+        <tbody id="users-body"></tbody></table>
+    </div>
+  </div>
+
   <!-- ===== TAB: TERMINAL ===== -->
   <div id="view-term" style="display:none">
     <div class="termbar">
@@ -481,9 +522,11 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-quar').style.display = t==='quar'?'block':'none';
   $('#view-sys').style.display = t==='sys'?'block':'none';
   $('#view-files').style.display = t==='files'?'block':'none';
+  $('#view-users').style.display = t==='users'?'block':'none';
   $('#view-term').style.display = t==='term'?'block':'none';
   if(t==='quar') loadQuar();
   if(t==='files'){ if(!$('#fcrumb').value) $('#fcrumb').value = RUN.run_home||'/'; loadFs($('#fcrumb').value); }
+  if(t==='users') loadUsers();
   if(t==='term') openTerm();
   if(t==='sys'){ pollMonitor(); if(!window.__procTimer) window.__procTimer=setInterval(pollMonitor,2000); }
   else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
@@ -699,8 +742,8 @@ window.fDelete=(p,name,isDir)=>{
 
 // ---- wizard de elevação (sudo) ----
 let ELEV=null;
-function askElevation(url, body, msg){
-  ELEV={url, body};
+function askElevation(url, body, msg, onOk){
+  ELEV={url, body, onOk};
   $('#elev-user').textContent = RUN.run_user||'';
   $('#elev-msg').textContent = msg||'Sem permissões para esta operação.';
   $('#elev-err').textContent=''; $('#elev-pass').value='';
@@ -715,11 +758,55 @@ $('#elev-ok').onclick = async ()=>{
   try{
     const r = await fetch(ELEV.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     const j = await r.json().catch(()=>({}));
-    if(r.ok && !j.error){ $('#elev-ov').classList.remove('on'); toast('executado como root',false); loadFs(FPATH); }
+    if(r.ok && !j.error){ $('#elev-ov').classList.remove('on'); toast('executado como root',false);
+      (ELEV && ELEV.onOk) ? ELEV.onOk() : loadFs(FPATH); }
     else{ $('#elev-err').textContent = j.error||'falhou'; }
   }catch(e){ $('#elev-err').textContent='erro de ligação'; }
   $('#elev-ok').disabled=false;
 };
+
+// ---- gestão de utilizadores ----
+let USERS=[], USHOWSYS=false;
+async function loadUsers(){
+  const r = await (await fetch('/api/users')).json();
+  USERS = r.users||[]; renderUsers();
+}
+function renderUsers(){
+  const list = USHOWSYS ? USERS : USERS.filter(u=>!u.is_system);
+  $('#users-body').innerHTML = list.map(u=>{
+    const chips = u.groups.map(g=>`<span class="gchip">${esc(g)}</span>`).join('');
+    return `<tr>
+      <td><b>${esc(u.name)}</b>${u.is_system?'<span class="ubadge">sistema</span>':''}<div class="psvc">${esc(u.gecos||u.home)}</div></td>
+      <td class="num">${u.uid}</td>
+      <td class="psvc mono">${esc(u.shell)}</td>
+      <td>${chips}</td>
+      <td><div class="fact">
+        <button class="btn-ghost" title="mudar password" onclick="uPasswd('${jsq(u.name)}')">🔑</button>
+        <button class="btn-ghost" title="mudar shell" onclick="uShell('${jsq(u.name)}','${jsq(u.shell)}')">🐚</button>
+        <button class="btn-ghost" title="adicionar a grupo" onclick="uAddGroup('${jsq(u.name)}')">👥</button>
+        <button class="btn-ghost" title="bloquear" onclick="uLock('${jsq(u.name)}',true)">🔒</button>
+        <button class="btn-ghost" title="desbloquear" onclick="uLock('${jsq(u.name)}',false)">🔓</button>
+        <button class="btn-danger" title="apagar" onclick="uDelete('${jsq(u.name)}')">🗑</button>
+      </div></td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="psvc" style="padding:16px">sem utilizadores</td></tr>';
+}
+$('#ushowsys').onclick=()=>{ USHOWSYS=!USHOWSYS; $('#ushowsys').textContent = USHOWSYS?'🙈 Ocultar do sistema':'👁 Mostrar do sistema'; renderUsers(); };
+$('#unew').onclick=()=>{ $('#ucreate').classList.toggle('on'); };
+$('#uc-cancel').onclick=()=>{ $('#ucreate').classList.remove('on'); };
+$('#uc-ok').onclick=()=>{
+  const name=$('#uc-name').value.trim(); if(!name){ toast('username obrigatório',true); return; }
+  const body={ username:name, fullname:$('#uc-full').value, shell:$('#uc-shell').value,
+    groups:$('#uc-groups').value, newpass:$('#uc-pass').value, create_home:$('#uc-home').checked };
+  askElevation('/api/users/create', body, `Criar o utilizador "${name}" requer administrador.`, ()=>{
+    $('#ucreate').classList.remove('on'); ['uc-name','uc-full','uc-shell','uc-groups','uc-pass'].forEach(id=>$('#'+id).value=''); loadUsers(); });
+};
+window.uPasswd=(u)=>{ const p=prompt(`Nova password para "${u}":`); if(p) askElevation('/api/users/passwd',{username:u,newpass:p},`Definir password de "${u}".`,loadUsers); };
+window.uShell=(u,cur)=>{ const s=prompt(`Nova shell para "${u}":`,cur); if(s&&s!==cur) askElevation('/api/users/modify',{username:u,action:'shell',value:s},`Mudar shell de "${u}".`,loadUsers); };
+window.uAddGroup=(u)=>{ const g=prompt(`Adicionar "${u}" a que grupo?`); if(g) askElevation('/api/users/modify',{username:u,action:'addgroup',value:g},`Adicionar "${u}" ao grupo ${g}.`,loadUsers); };
+window.uLock=(u,lock)=>{ askElevation('/api/users/modify',{username:u,action:lock?'lock':'unlock',value:''},`${lock?'Bloquear':'Desbloquear'} "${u}".`,loadUsers); };
+window.uDelete=(u)=>{ if(!confirm(`Apagar o utilizador "${u}"?`)) return;
+  const rh=confirm('Apagar também a pasta home (irreversível)? OK = sim, Cancelar = manter home');
+  askElevation('/api/users/delete',{username:u,remove_home:rh},`Apagar o utilizador "${u}".`,loadUsers); };
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
   const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)

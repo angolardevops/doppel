@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, elevate, fsops, procs, remove, scan, stats, sysmon, term};
+use crate::{auth, browse, elevate, fsops, procs, remove, scan, stats, sysmon, term, users};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
@@ -263,6 +263,33 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let id = query_param(&query, "id").unwrap_or_default();
             term::close(state, &id);
             respond_json(req, 200, &json!({"ok": true}));
+        }
+        // ---- gestão de utilizadores do sistema (mutações via sudo) ----
+        (Method::Get, "/api/users") => {
+            respond_json(req, 200, &json!(users::list()));
+        }
+        (Method::Post, "/api/users/create") => {
+            let b = read_body(&mut req);
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, users::create(
+                u, pw,
+                str_of(&b, "username"), str_of(&b, "fullname"), str_of(&b, "shell"),
+                b.get("create_home").and_then(|v| v.as_bool()).unwrap_or(true),
+                str_of(&b, "groups"), str_of(&b, "newpass"),
+            ));
+        }
+        (Method::Post, "/api/users/passwd") => {
+            let b = read_body(&mut req);
+            fs_result(req, users::set_password(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "username"), str_of(&b, "newpass")));
+        }
+        (Method::Post, "/api/users/modify") => {
+            let b = read_body(&mut req);
+            fs_result(req, users::modify(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "username"), str_of(&b, "action"), str_of(&b, "value")));
+        }
+        (Method::Post, "/api/users/delete") => {
+            let b = read_body(&mut req);
+            let rh = b.get("remove_home").and_then(|v| v.as_bool()).unwrap_or(false);
+            fs_result(req, users::delete(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "username"), rh));
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();

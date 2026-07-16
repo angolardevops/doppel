@@ -17,6 +17,7 @@ mod state;
 mod stats;
 mod sysmon;
 mod term;
+mod users;
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
