@@ -63,6 +63,7 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 📁 **Gestor de ficheiros** | Navegar, criar pasta/ficheiro, renomear, `chmod`, apagar — com as permissões do utilizador. |
 | 🔒 **Wizard de elevação** | Quando uma operação falha por falta de permissões, um wizard pede a password (verificada por PAM) e repete via `sudo`; `chown` corre sempre elevado. |
 | 👥 **Gestão de utilizadores** | Listar utilizadores/grupos; criar, mudar password/shell, adicionar a grupos, bloquear e apagar — via `useradd`/`usermod`/`chpasswd`/`userdel` no wizard `sudo`. |
+| ⚙️ **Serviços systemd** | Listar (com estado e arranque), pesquisar e filtrar; iniciar/parar/reiniciar/ativar/desativar via wizard `sudo`. |
 | 🖥️ **Terminal embebido** | Shell real (PTY) no browser via [xterm.js](https://xtermjs.org) com **renderer WebGL** (aceleração GPU). |
 
 ---
