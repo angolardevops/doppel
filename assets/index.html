@@ -418,6 +418,19 @@
     </div>
   </div>
 </div>
+<div class="ov" id="elev-ov">
+  <div class="modal">
+    <h3>🔒 Permissões de administrador</h3>
+    <p id="elev-msg" style="color:var(--bad)"></p>
+    <div class="box lock">Para continuar como <b id="elev-user"></b> via <b>sudo</b>, confirma a tua password do sistema. É verificada localmente (PAM) e nunca guardada.</div>
+    <input id="elev-pass" type="password" autocomplete="current-password" placeholder="password do sistema" />
+    <div class="err" id="elev-err" style="color:var(--bad);font-size:13px;min-height:16px;margin-top:8px"></div>
+    <div class="row">
+      <button class="btn-ghost" id="elev-cancel">Cancelar</button>
+      <button class="btn-warn" id="elev-ok">Executar como root</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script src="/vendor/xterm.js"></script>
@@ -651,7 +664,8 @@ async function loadFs(path){
       <td class="num psvc">${e.modified?fdate(e.modified):'—'}</td>
       <td><div class="fact">
         <button class="btn-ghost" title="renomear" onclick="fRename('${jsq(e.path)}','${jsq(e.name)}')">✎</button>
-        <button class="btn-ghost" title="permissões" onclick="fChmod('${jsq(e.path)}','${e.mode}')">🔑</button>
+        <button class="btn-ghost" title="permissões (chmod)" onclick="fChmod('${jsq(e.path)}','${e.mode}')">🔑</button>
+        <button class="btn-ghost" title="dono (chown, root)" onclick="fChown('${jsq(e.path)}')">👤</button>
         <button class="btn-danger" title="apagar" onclick="fDelete('${jsq(e.path)}','${jsq(e.name)}',${e.kind==='dir'})">🗑</button>
       </div></td></tr>`;
   }).join('') || '<tr><td colspan="6" class="psvc" style="padding:16px">pasta vazia</td></tr>';
@@ -664,17 +678,47 @@ $('#fup').onclick=()=>{ const p=FPATH.replace(/\/[^/]+\/?$/,'')||'/'; loadFs(p);
 async function fsPost(url, body){
   const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
-  if(!r.ok||j.error){ toast(j.error||'falhou',true); return false; }
-  loadFs(FPATH); return true;
+  if(r.ok && !j.error){ loadFs(FPATH); return true; }
+  const err = j.error||'falhou';
+  // erro de permissões → oferece elevação (a menos que já elevado ou seja chown)
+  if(!body.elevated && /denied|permiss|permit|not permitted|eacces|read-only|só de leitura/i.test(err)){
+    askElevation(url, body, err);
+  } else { toast(err, true); }
+  return false;
 }
 $('#fmkdir').onclick=()=>{ const n=prompt('Nome da nova pasta:'); if(n) fsPost('/api/fs/mkdir',{path:FPATH,name:n}); };
 $('#fmkfile').onclick=()=>{ const n=prompt('Nome do novo ficheiro:'); if(n) fsPost('/api/fs/mkfile',{path:FPATH,name:n}); };
 window.fRename=(p,old)=>{ const n=prompt('Novo nome:',old); if(n&&n!==old) fsPost('/api/fs/rename',{path:p,name:n}); };
 window.fChmod=(p,mode)=>{ const m=prompt('Permissões em octal (ex.: 755):',mode); if(m) fsPost('/api/fs/chmod',{path:p,mode:m}); };
+window.fChown=(p)=>{ const o=prompt('Novo dono (user ou user:group):'); if(o) askElevation('/api/fs/chown',{path:p,owner:o},'Alterar o dono requer administrador.'); };
 window.fDelete=(p,name,isDir)=>{
   const rec = isDir;
   if(!confirm(`Apagar "${name}"?${isDir?' (pasta e todo o conteúdo, recursivo)':''}\nEsta ação é irreversível.`)) return;
   fsPost('/api/fs/delete',{path:p,recursive:rec});
+};
+
+// ---- wizard de elevação (sudo) ----
+let ELEV=null;
+function askElevation(url, body, msg){
+  ELEV={url, body};
+  $('#elev-user').textContent = RUN.run_user||'';
+  $('#elev-msg').textContent = msg||'Sem permissões para esta operação.';
+  $('#elev-err').textContent=''; $('#elev-pass').value='';
+  $('#elev-ov').classList.add('on'); setTimeout(()=>$('#elev-pass').focus(),50);
+}
+$('#elev-cancel').onclick=()=> $('#elev-ov').classList.remove('on');
+$('#elev-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#elev-ok').click(); });
+$('#elev-ok').onclick = async ()=>{
+  const pw=$('#elev-pass').value; if(!pw){ $('#elev-err').textContent='Introduz a password.'; return; }
+  $('#elev-ok').disabled=true;
+  const b={...ELEV.body, elevated:true, password:pw};
+  try{
+    const r = await fetch(ELEV.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    const j = await r.json().catch(()=>({}));
+    if(r.ok && !j.error){ $('#elev-ov').classList.remove('on'); toast('executado como root',false); loadFs(FPATH); }
+    else{ $('#elev-err').textContent = j.error||'falhou'; }
+  }catch(e){ $('#elev-err').textContent='erro de ligação'; }
+  $('#elev-ok').disabled=false;
 };
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);

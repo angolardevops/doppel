@@ -7,6 +7,7 @@
 
 mod auth;
 mod browse;
+mod elevate;
 mod fsops;
 mod procs;
 mod remove;

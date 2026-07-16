@@ -61,6 +61,7 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 📊 **Monitorização** | KPIs em tempo real (CPU, RAM, swap, temperatura, GPU via `nvidia-smi`, uptime, load), **mapa de calor por core** (online/offline), **gráficos históricos** (~10 min) e Top-10 processos com o serviço systemd. |
 | 💽 **Partições / FHS** | Todas as montagens com tipo de fs, ocupação e livre. |
 | 📁 **Gestor de ficheiros** | Navegar, criar pasta/ficheiro, renomear, `chmod`, apagar — com as permissões do utilizador. |
+| 🔒 **Wizard de elevação** | Quando uma operação falha por falta de permissões, um wizard pede a password (verificada por PAM) e repete via `sudo`; `chown` corre sempre elevado. |
 | 🖥️ **Terminal embebido** | Shell real (PTY) no browser via [xterm.js](https://xtermjs.org) com **renderer WebGL** (aceleração GPU). |
 
 ---

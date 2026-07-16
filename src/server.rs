@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, fsops, procs, remove, scan, stats, sysmon, term};
+use crate::{auth, browse, elevate, fsops, procs, remove, scan, stats, sysmon, term};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
@@ -175,24 +175,55 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         }
         (Method::Post, "/api/fs/mkdir") => {
             let b = read_body(&mut req);
-            fs_result(req, fsops::mkdir(str_of(&b, "path"), str_of(&b, "name")));
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, if elevated(&b) {
+                elevate::mkdir(u, pw, str_of(&b, "path"), str_of(&b, "name"))
+            } else {
+                fsops::mkdir(str_of(&b, "path"), str_of(&b, "name"))
+            });
         }
         (Method::Post, "/api/fs/mkfile") => {
             let b = read_body(&mut req);
-            fs_result(req, fsops::mkfile(str_of(&b, "path"), str_of(&b, "name")));
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, if elevated(&b) {
+                elevate::mkfile(u, pw, str_of(&b, "path"), str_of(&b, "name"))
+            } else {
+                fsops::mkfile(str_of(&b, "path"), str_of(&b, "name"))
+            });
         }
         (Method::Post, "/api/fs/rename") => {
             let b = read_body(&mut req);
-            fs_result(req, fsops::rename(str_of(&b, "path"), str_of(&b, "name")));
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, if elevated(&b) {
+                elevate::rename(u, pw, str_of(&b, "path"), str_of(&b, "name"))
+            } else {
+                fsops::rename(str_of(&b, "path"), str_of(&b, "name"))
+            });
         }
         (Method::Post, "/api/fs/chmod") => {
             let b = read_body(&mut req);
-            fs_result(req, fsops::chmod(str_of(&b, "path"), str_of(&b, "mode")));
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, if elevated(&b) {
+                elevate::chmod(u, pw, str_of(&b, "path"), str_of(&b, "mode"))
+            } else {
+                fsops::chmod(str_of(&b, "path"), str_of(&b, "mode"))
+            });
+        }
+        (Method::Post, "/api/fs/chown") => {
+            // chown exige sempre root.
+            let b = read_body(&mut req);
+            let rec = b.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+            fs_result(req, elevate::chown(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "path"), str_of(&b, "owner"), rec));
         }
         (Method::Post, "/api/fs/delete") => {
             let b = read_body(&mut req);
             let rec = b.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
-            fs_result(req, fsops::delete(str_of(&b, "path"), rec));
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            fs_result(req, if elevated(&b) {
+                elevate::delete(u, pw, str_of(&b, "path"), rec)
+            } else {
+                fsops::delete(str_of(&b, "path"), rec)
+            });
         }
         // ---- terminal embebido (PTY) ----
         (Method::Post, "/api/term/new") => {
@@ -354,6 +385,10 @@ fn read_body(req: &mut Request) -> Value {
 
 fn str_of<'a>(body: &'a Value, key: &str) -> &'a str {
     body.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+fn elevated(body: &Value) -> bool {
+    body.get("elevated").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 /// Responde a uma operação de ficheiros: 200 {ok} ou 400 {error}.

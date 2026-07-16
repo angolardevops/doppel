@@ -521,6 +521,18 @@ mod tests {
     }
 
     #[test]
+    fn elevate_valida_input_sem_correr_sudo() {
+        // password vazia → erro imediato (antes de PAM/sudo)
+        assert!(crate::elevate::mkdir("walter", "", "/tmp", "x").is_err());
+        // nome com '/' → rejeitado na validação
+        assert!(crate::elevate::mkdir("walter", "pw", "/tmp", "a/b").is_err());
+        // modo octal inválido → rejeitado antes de tudo
+        assert!(crate::elevate::chmod("walter", "pw", "/tmp/x", "9z9").is_err());
+        // dono com caracteres inválidos → rejeitado
+        assert!(crate::elevate::chown("walter", "pw", "/tmp/x", "mau dono!", false).is_err());
+    }
+
+    #[test]
     fn terminal_pty_roundtrip() {
         std::env::set_var("SHELL", "/bin/sh");
         let home = tmp("home6");
