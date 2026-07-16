@@ -61,6 +61,36 @@ pub fn list() -> Vec<ServiceInfo> {
     services
 }
 
+#[derive(Serialize)]
+pub struct TimerInfo {
+    pub unit: String,
+    pub activates: String,
+    pub schedule: String,
+}
+
+/// Lista os timers systemd (agendamentos). `list-timers` mostra próximo/último.
+pub fn timers() -> Vec<TimerInfo> {
+    let mut out = Vec::new();
+    if let Ok(o) = Command::new("systemctl")
+        .args(["list-timers", "--all", "--no-legend", "--no-pager"])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() < 2 {
+                continue;
+            }
+            // os 2 últimos tokens são UNIT (.timer) e ACTIVATES (.service);
+            // o resto é o horário (NEXT / LEFT / LAST / PASSED).
+            let activates = f[f.len() - 1].to_string();
+            let unit = f[f.len() - 2].to_string();
+            let schedule = f[..f.len() - 2].join(" ");
+            out.push(TimerInfo { unit, activates, schedule });
+        }
+    }
+    out
+}
+
 fn valid_unit(u: &str) -> Result<(), String> {
     let ok = !u.is_empty()
         && u.len() <= 256

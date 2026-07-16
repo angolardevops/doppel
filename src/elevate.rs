@@ -14,6 +14,36 @@ pub(crate) fn sudo_exec(user: &str, password: &str, argv: &[&str]) -> Result<(),
     sudo_exec_stdin(user, password, argv, &[])
 }
 
+/// Como `sudo_exec`, mas devolve o stdout do comando (para leituras elevadas).
+pub(crate) fn sudo_output(user: &str, password: &str, argv: &[&str]) -> Result<String, String> {
+    if password.is_empty() {
+        return Err("password obrigatória".into());
+    }
+    if !auth::authenticate(user, password) {
+        return Err("password incorreta".into());
+    }
+    let mut child = Command::new("sudo")
+        .args(["-S", "-k", "-p", ""])
+        .arg("--")
+        .args(argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("sudo indisponível: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(format!("{password}\n").as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    // smartctl e afins usam códigos de saída >0 com texto útil no stdout.
+    if out.status.success() || !text.trim().is_empty() {
+        Ok(text)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 /// Como `sudo_exec`, mas envia `extra` ao stdin do comando (a seguir à password
 /// do sudo). Usado por comandos que lêem de stdin (ex.: `chpasswd`).
 pub(crate) fn sudo_exec_stdin(user: &str, password: &str, argv: &[&str], extra: &[u8]) -> Result<(), String> {

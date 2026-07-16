@@ -521,6 +521,29 @@ mod tests {
     }
 
     #[test]
+    fn net_disks_logs_timers() {
+        // rede: deve haver pelo menos o loopback
+        let n = crate::netinfo::info();
+        assert!(n.ifaces.iter().any(|i| i.name == "lo"), "deve listar loopback");
+        // discos: lsblk devolve uma árvore com blockdevices
+        let d = crate::disks::blocks();
+        assert!(d.get("tree").and_then(|t| t.get("blockdevices")).is_some());
+        // du numa pasta temporária
+        let dir = tmp("du1");
+        std::fs::write(dir.join("f"), b"conteudo").unwrap();
+        let du = crate::disks::du(&dir.to_string_lossy()).unwrap();
+        assert!(!du.is_empty());
+        // logs: journalctl (pode falhar sem grupo, mas não deve entrar em pânico)
+        let _ = crate::logs::recent("", 5, "", "");
+        // smart validação: dispositivo inválido rejeitado sem sudo
+        assert!(crate::disks::smart("walter", "", "sda").is_err());
+        assert!(crate::disks::smart("walter", "", "/dev/x; rm").is_err());
+        // timers não entra em pânico
+        let _ = crate::services::timers();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn services_list_e_validacao() {
         let s = crate::services::list();
         assert!(!s.is_empty(), "deve listar serviços systemd");

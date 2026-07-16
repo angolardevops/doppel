@@ -205,6 +205,14 @@
   #term{width:100%;height:100%}
   .xterm{height:100%}
 
+  /* logs / rede / discos */
+  select.crumb{cursor:pointer}
+  .logbox{margin:0;padding:14px;max-height:66vh;overflow:auto;font-family:ui-monospace,Menlo,monospace;
+    font-size:12px;line-height:1.55;color:#c7d3e2;white-space:pre-wrap;word-break:break-word;background:#05080d}
+  .addr{display:inline-block;font-size:11px;background:#101a28;border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;margin:1px 3px 1px 0;color:var(--acc)}
+  .addr.v6{color:var(--violet)}
+
   /* serviços */
   .svcf.on{border-color:var(--acc);color:var(--txt)}
   .sbadge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:capitalize}
@@ -278,6 +286,9 @@
     <div class="tab" data-tab="files" onclick="switchTab('files')">Ficheiros</div>
     <div class="tab" data-tab="users" onclick="switchTab('users')">Utilizadores</div>
     <div class="tab" data-tab="svc" onclick="switchTab('svc')">Serviços</div>
+    <div class="tab" data-tab="logs" onclick="switchTab('logs')">Logs</div>
+    <div class="tab" data-tab="net" onclick="switchTab('net')">Rede</div>
+    <div class="tab" data-tab="disk" onclick="switchTab('disk')">Discos</div>
     <div class="tab" data-tab="term" onclick="switchTab('term')">Terminal</div>
     <div class="tab" data-tab="sys" onclick="switchTab('sys')">Sistema</div>
   </div>
@@ -453,6 +464,61 @@
         <th>Descrição</th><th style="width:220px">Ações</th></tr></thead>
         <tbody id="svc-body"></tbody></table>
     </div>
+    <div class="panelbox">
+      <div class="systitle">⏰ Timers (agendamentos) <button class="btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadTimers()">↻ carregar</button></div>
+      <table class="ptab"><thead><tr><th>Timer</th><th>Ativa</th><th>Próximo / último</th></tr></thead>
+        <tbody id="timers-body"><tr><td colspan="3" class="psvc" style="padding:14px">carrega para ver os timers</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <!-- ===== TAB: LOGS ===== -->
+  <div id="view-logs" style="display:none">
+    <div class="picker">
+      <div class="row">
+        <input class="crumb" id="log-unit" placeholder="unit (ex.: doppel.service) — vazio = tudo" style="flex:1" />
+        <input class="crumb" id="log-grep" placeholder="filtrar texto" style="max-width:200px" />
+        <select id="log-prio" class="crumb" style="max-width:150px">
+          <option value="">qualquer prioridade</option><option value="err">erros (≤err)</option>
+          <option value="warning">avisos (≤warning)</option><option value="info">info</option></select>
+        <button class="btn-primary" onclick="loadLogs()">Ver</button>
+        <label class="uchk"><input type="checkbox" id="log-auto"> auto (3s)</label>
+      </div>
+    </div>
+    <div class="panelbox"><pre id="log-out" class="logbox">…</pre></div>
+  </div>
+
+  <!-- ===== TAB: REDE ===== -->
+  <div id="view-net" style="display:none">
+    <div class="hint">Interfaces e sockets · <button class="btn-ghost" style="padding:3px 9px" onclick="loadNet()">↻</button></div>
+    <div class="panelbox">
+      <div class="systitle">🌐 Interfaces</div>
+      <table class="ptab"><thead><tr><th>Interface</th><th>Estado</th><th>MAC</th><th>MTU</th><th>Endereços</th></tr></thead>
+        <tbody id="net-if"></tbody></table>
+    </div>
+    <div class="panelbox">
+      <div class="systitle">🔌 Sockets</div>
+      <table class="ptab"><thead><tr><th>Proto</th><th>Estado</th><th>Local</th><th>Remoto</th></tr></thead>
+        <tbody id="net-sock"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ===== TAB: DISCOS ===== -->
+  <div id="view-disk" style="display:none">
+    <div class="hint">Dispositivos, uso por pasta e S.M.A.R.T. · <button class="btn-ghost" style="padding:3px 9px" onclick="loadDisks()">↻</button></div>
+    <div class="panelbox">
+      <div class="systitle">💽 Dispositivos de bloco</div>
+      <table class="ptab"><thead><tr><th>Nome</th><th>Tamanho</th><th>Tipo</th><th>FS</th><th>Montagem</th><th>Modelo</th><th style="width:120px">S.M.A.R.T.</th></tr></thead>
+        <tbody id="disk-body"></tbody></table>
+    </div>
+    <div class="panelbox">
+      <div class="systitle">📂 Uso por pasta</div>
+      <div style="padding:12px 15px" class="row">
+        <input class="crumb mono" id="du-path" placeholder="/caminho" style="flex:1" />
+        <button class="btn-primary" onclick="loadDu()">Analisar</button>
+      </div>
+      <table class="ptab"><thead><tr><th>Pasta</th><th class="num" style="width:30%">Tamanho</th></tr></thead>
+        <tbody id="du-body"></tbody></table>
+    </div>
   </div>
 
   <!-- ===== TAB: TERMINAL ===== -->
@@ -552,11 +618,18 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-files').style.display = t==='files'?'block':'none';
   $('#view-users').style.display = t==='users'?'block':'none';
   $('#view-svc').style.display = t==='svc'?'block':'none';
+  $('#view-logs').style.display = t==='logs'?'block':'none';
+  $('#view-net').style.display = t==='net'?'block':'none';
+  $('#view-disk').style.display = t==='disk'?'block':'none';
   $('#view-term').style.display = t==='term'?'block':'none';
+  if(t!=='logs' && window.__logTimer){ clearInterval(window.__logTimer); window.__logTimer=null; }
   if(t==='quar') loadQuar();
   if(t==='files'){ if(!$('#fcrumb').value) $('#fcrumb').value = RUN.run_home||'/'; loadFs($('#fcrumb').value); }
   if(t==='users') loadUsers();
   if(t==='svc') loadServices();
+  if(t==='logs') loadLogs();
+  if(t==='net') loadNet();
+  if(t==='disk'){ if(!$('#du-path').value) $('#du-path').value = RUN.run_home||'/'; loadDisks(); }
   if(t==='term') openTerm();
   if(t==='sys'){ pollMonitor(); if(!window.__procTimer) window.__procTimer=setInterval(pollMonitor,2000); }
   else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
@@ -789,7 +862,7 @@ $('#elev-ok').onclick = async ()=>{
     const r = await fetch(ELEV.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     const j = await r.json().catch(()=>({}));
     if(r.ok && !j.error){ $('#elev-ov').classList.remove('on'); toast('executado como root',false);
-      (ELEV && ELEV.onOk) ? ELEV.onOk() : loadFs(FPATH); }
+      (ELEV && ELEV.onOk) ? ELEV.onOk(j) : loadFs(FPATH); }
     else{ $('#elev-err').textContent = j.error||'falhou'; }
   }catch(e){ $('#elev-err').textContent='erro de ligação'; }
   $('#elev-ok').disabled=false;
@@ -875,6 +948,82 @@ function renderServices(){
 }
 window.svcAct=(unit,action)=>{ const names={start:'iniciar',stop:'parar',restart:'reiniciar',enable:'ativar',disable:'desativar'};
   askElevation('/api/services/action',{unit,action},`${names[action]||action} o serviço "${unit}".`,loadServices); };
+async function loadTimers(){
+  const r = await (await fetch('/api/timers')).json();
+  $('#timers-body').innerHTML = (r.timers||[]).map(t=>`<tr>
+    <td class="mono">${esc(t.unit)}</td><td class="mono psvc">${esc(t.activates)}</td>
+    <td class="psvc">${esc(t.schedule)}</td></tr>`).join('') || '<tr><td colspan="3" class="psvc" style="padding:14px">sem timers</td></tr>';
+}
+
+// ---- logs ----
+async function loadLogs(){
+  const q = new URLSearchParams({ unit:$('#log-unit').value.trim(), grep:$('#log-grep').value.trim(),
+    priority:$('#log-prio').value, lines:'300' });
+  try{
+    const r = await (await fetch('/api/logs?'+q)).json();
+    if(r.error){ $('#log-out').textContent = '⚠ '+r.error; return; }
+    $('#log-out').textContent = (r.lines||[]).join('\n') || '(sem entradas)';
+    const el=$('#log-out'); el.scrollTop = el.scrollHeight;
+  }catch(e){ $('#log-out').textContent='erro a obter logs'; }
+}
+$('#log-auto').addEventListener('change', e=>{
+  if(e.target.checked){ if(!window.__logTimer) window.__logTimer=setInterval(loadLogs,3000); }
+  else if(window.__logTimer){ clearInterval(window.__logTimer); window.__logTimer=null; }
+});
+$('#log-unit').addEventListener('keydown',e=>{ if(e.key==='Enter') loadLogs(); });
+$('#log-grep').addEventListener('keydown',e=>{ if(e.key==='Enter') loadLogs(); });
+
+// ---- rede ----
+async function loadNet(){
+  const d = await (await fetch('/api/net')).json();
+  $('#net-if').innerHTML = (d.ifaces||[]).map(i=>{
+    const addrs = i.addrs.map(a=>`<span class="addr ${a.family==='inet6'?'v6':''}">${esc(a.ip)}/${a.prefix}</span>`).join('') || '<span class="psvc">—</span>';
+    const up = i.state==='UP'||i.state==='UNKNOWN';
+    return `<tr><td class="mono"><b>${esc(i.name)}</b></td>
+      <td><span class="sbadge ${up?'active':'inactive'}">${esc(i.state||'?')}</span></td>
+      <td class="psvc mono">${esc(i.mac||'—')}</td><td class="num psvc">${i.mtu}</td><td>${addrs}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="psvc" style="padding:14px">sem interfaces</td></tr>';
+  $('#net-sock').innerHTML = (d.sockets||[]).slice(0,300).map(s=>`<tr>
+    <td class="mono">${esc(s.proto)}</td>
+    <td><span class="sen ${s.state==='LISTEN'?'enabled':''}">${esc(s.state)}</span></td>
+    <td class="mono psvc">${esc(s.local)}</td><td class="mono psvc">${esc(s.peer)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="psvc" style="padding:14px">sem sockets</td></tr>';
+}
+
+// ---- discos ----
+let DISK_SMART=false;
+async function loadDisks(){
+  const d = await (await fetch('/api/disks')).json();
+  DISK_SMART = d.smart;
+  const rows=[]; const walk=(devs,depth)=>{ (devs||[]).forEach(dv=>{
+    const pad = '&nbsp;'.repeat(depth*3);
+    const isDisk = dv.type==='disk';
+    rows.push(`<tr>
+      <td class="mono">${pad}${depth?'└ ':''}<b>${esc(dv.name)}</b></td>
+      <td class="num">${esc(dv.size||'')}</td><td class="psvc">${esc(dv.type||'')}</td>
+      <td class="psvc mono">${esc(dv.fstype||'')}</td><td class="psvc mono">${esc(dv.mountpoint||'')}</td>
+      <td class="psvc">${esc(dv.model||'')}</td>
+      <td>${isDisk?(DISK_SMART?`<button class="btn-ghost" style="padding:3px 8px;font-size:11px" onclick="smart('/dev/${esc(dv.name)}')">verificar</button>`:'<span class="psvc">n/d</span>'):''}</td>
+    </tr>`);
+    if(dv.children) walk(dv.children, depth+1);
+  }); };
+  walk(d.tree && d.tree.blockdevices, 0);
+  $('#disk-body').innerHTML = rows.join('') || '<tr><td colspan="7" class="psvc" style="padding:14px">sem dispositivos</td></tr>';
+}
+window.smart=(dev)=>{ askElevation('/api/disks/smart',{dev},`Ler S.M.A.R.T. de ${dev} (requer root).`,
+  (j)=> alert('S.M.A.R.T. · '+dev+'\n\n'+(j.output||'(sem saída)')) ); };
+async function loadDu(){
+  const p=$('#du-path').value.trim(); if(!p) return;
+  $('#du-body').innerHTML='<tr><td colspan="2" class="psvc" style="padding:14px">a calcular…</td></tr>';
+  try{
+    const r = await (await fetch('/api/disks/du?path='+encodeURIComponent(p))).json();
+    if(r.error){ $('#du-body').innerHTML=`<tr><td colspan="2" class="psvc" style="padding:14px">⚠ ${esc(r.error)}</td></tr>`; return; }
+    const max=Math.max(1,...(r.entries||[]).map(e=>e.size));
+    $('#du-body').innerHTML = (r.entries||[]).map(e=>{ const pct=(e.size/max*100).toFixed(0);
+      return `<tr><td class="mono">${esc(e.path)}</td>
+        <td class="num pbar"><i style="width:${pct}%"></i><span>${fmt(e.size)}</span></td></tr>`; }).join('');
+  }catch(e){ $('#du-body').innerHTML='<tr><td colspan="2" class="psvc" style="padding:14px">erro</td></tr>'; }
+}
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
   const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)

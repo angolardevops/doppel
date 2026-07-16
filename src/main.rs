@@ -7,8 +7,11 @@
 
 mod auth;
 mod browse;
+mod disks;
 mod elevate;
 mod fsops;
+mod logs;
+mod netinfo;
 mod procs;
 mod remove;
 mod scan;

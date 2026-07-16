@@ -9,7 +9,9 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, elevate, fsops, procs, remove, scan, services, stats, sysmon, term, users};
+use crate::{
+    auth, browse, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats, sysmon, term, users,
+};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
@@ -298,6 +300,39 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Post, "/api/services/action") => {
             let b = read_body(&mut req);
             fs_result(req, services::action(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "unit"), str_of(&b, "action")));
+        }
+        (Method::Get, "/api/timers") => {
+            respond_json(req, 200, &json!({ "timers": services::timers() }));
+        }
+        // ---- logs (journalctl) ----
+        (Method::Get, "/api/logs") => {
+            let unit = query_param(&query, "unit").unwrap_or_default();
+            let lines = query_param(&query, "lines").and_then(|s| s.parse().ok()).unwrap_or(200);
+            let prio = query_param(&query, "priority").unwrap_or_default();
+            let grep = query_param(&query, "grep").unwrap_or_default();
+            respond_json(req, 200, &json!(logs::recent(&unit, lines, &prio, &grep)));
+        }
+        // ---- rede (só leitura) ----
+        (Method::Get, "/api/net") => {
+            respond_json(req, 200, &json!(netinfo::info()));
+        }
+        // ---- discos ----
+        (Method::Get, "/api/disks") => {
+            respond_json(req, 200, &disks::blocks());
+        }
+        (Method::Get, "/api/disks/du") => {
+            let p = query_param(&query, "path").unwrap_or_else(|| state.run_home.to_string_lossy().into_owned());
+            match disks::du(&p) {
+                Ok(e) => respond_json(req, 200, &json!({ "entries": e })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
+        (Method::Post, "/api/disks/smart") => {
+            let b = read_body(&mut req);
+            match disks::smart(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "dev")) {
+                Ok(text) => respond_json(req, 200, &json!({ "output": text })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();
