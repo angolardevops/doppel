@@ -521,6 +521,35 @@ mod tests {
     }
 
     #[test]
+    fn backups_add_run_remove() {
+        let home = tmp("bkhome");
+        let src = tmp("bksrc");
+        fs::write(src.join("a.txt"), b"conteudo").unwrap();
+        let dst = tmp("bkdst");
+        let (s, d) = (src.to_string_lossy().into_owned(), dst.to_string_lossy().into_owned());
+
+        crate::backups::add(&home, "t1", &s, &d, false).unwrap();
+        assert_eq!(crate::backups::list(&home).len(), 1);
+
+        let _out = crate::backups::run(&s, &d, false).unwrap();
+        assert!(dst.join("a.txt").exists(), "rsync deve copiar o conteúdo");
+
+        // destino dentro da origem → rejeitado
+        let inside = src.join("sub").to_string_lossy().into_owned();
+        assert!(crate::backups::add(&home, "x", &s, &inside, false).is_err());
+        // destino não-absoluto → rejeitado
+        assert!(crate::backups::run(&s, "relativo", false).is_err());
+
+        let id = crate::backups::list(&home)[0].id;
+        crate::backups::remove(&home, id).unwrap();
+        assert!(crate::backups::list(&home).is_empty());
+
+        for p in [&home, &src, &dst] {
+            let _ = fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
     fn apt_e_cron() {
         // upgradable/search não entram em pânico (podem vir vazios em CI)
         let _ = crate::apt::upgradable();

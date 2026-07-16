@@ -287,6 +287,7 @@
     <div class="tab" data-tab="users" onclick="switchTab('users')">Utilizadores</div>
     <div class="tab" data-tab="svc" onclick="switchTab('svc')">Serviços</div>
     <div class="tab" data-tab="pkg" onclick="switchTab('pkg')">Pacotes</div>
+    <div class="tab" data-tab="bkp" onclick="switchTab('bkp')">Backups</div>
     <div class="tab" data-tab="logs" onclick="switchTab('logs')">Logs</div>
     <div class="tab" data-tab="net" onclick="switchTab('net')">Rede</div>
     <div class="tab" data-tab="disk" onclick="switchTab('disk')">Discos</div>
@@ -504,6 +505,27 @@
     </div>
   </div>
 
+  <!-- ===== TAB: BACKUPS ===== -->
+  <div id="view-bkp" style="display:none">
+    <div class="picker">
+      <div class="urow2">
+        <input id="bk-name" placeholder="nome (opcional)" />
+        <input id="bk-src" class="mono" placeholder="origem (pasta)" />
+        <input id="bk-dst" class="mono" placeholder="destino (/caminho absoluto)" />
+        <label class="uchk"><input type="checkbox" id="bk-mirror"> espelho (--delete)</label>
+      </div>
+      <div class="row" style="margin-top:10px;justify-content:flex-end">
+        <button class="btn-ghost" id="bk-runnow">▶ Correr agora (sem guardar)</button>
+        <button class="btn-primary" id="bk-add">➕ Guardar tarefa</button>
+      </div>
+      <div class="hint" style="margin-top:8px">rsync -a · o <b>espelho</b> apaga no destino o que já não existe na origem. Corre com as tuas permissões.</div>
+    </div>
+    <div class="panelbox">
+      <table class="ptab"><thead><tr><th>Tarefa</th><th>Origem → Destino</th><th>Modo</th><th style="width:180px">Ações</th></tr></thead>
+        <tbody id="bk-body"></tbody></table>
+    </div>
+  </div>
+
   <!-- ===== TAB: LOGS ===== -->
   <div id="view-logs" style="display:none">
     <div class="picker">
@@ -659,6 +681,7 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-users').style.display = t==='users'?'block':'none';
   $('#view-svc').style.display = t==='svc'?'block':'none';
   $('#view-pkg').style.display = t==='pkg'?'block':'none';
+  $('#view-bkp').style.display = t==='bkp'?'block':'none';
   $('#view-logs').style.display = t==='logs'?'block':'none';
   $('#view-net').style.display = t==='net'?'block':'none';
   $('#view-disk').style.display = t==='disk'?'block':'none';
@@ -669,6 +692,7 @@ window.switchTab = (t)=>{ TAB=t;
   if(t==='users') loadUsers();
   if(t==='svc'){ loadServices(); loadCron(); }
   if(t==='pkg') loadPkg();
+  if(t==='bkp'){ if(!$('#bk-src').value) $('#bk-src').value=RUN.run_home||''; loadBackups(); }
   if(t==='logs') loadLogs();
   if(t==='net') loadNet();
   if(t==='disk'){ if(!$('#du-path').value) $('#du-path').value = RUN.run_home||'/'; loadDisks(); }
@@ -1111,6 +1135,39 @@ async function saveCron(){
   const j = await r.json().catch(()=>({}));
   if(r.ok && !j.error) toast('crontab guardado',false); else toast(j.error||'crontab inválido',true);
 }
+
+// ---- backups (rsync) ----
+async function loadBackups(){
+  const r = await (await fetch('/api/backups')).json();
+  $('#bk-body').innerHTML = (r.jobs||[]).map(j=>`<tr>
+    <td><b>${esc(j.name)}</b></td>
+    <td class="psvc mono">${esc(j.source)} → ${esc(j.dest)}</td>
+    <td>${j.mirror?'<span class="sbadge failed">espelho</span>':'<span class="sbadge inactive">cópia</span>'}</td>
+    <td><div class="fact">
+      <button class="btn-primary" style="padding:3px 10px;font-size:11px" onclick="bkRun('${jsq(j.source)}','${jsq(j.dest)}',${j.mirror},'${esc(j.name)}')">▶ correr</button>
+      <button class="btn-danger" style="padding:3px 9px;font-size:11px" onclick="bkRemove(${j.id})">🗑</button>
+    </div></td></tr>`).join('') || '<tr><td colspan="4" class="psvc" style="padding:14px">sem tarefas — cria uma acima</td></tr>';
+}
+$('#bk-add').onclick=async ()=>{
+  const body={ name:$('#bk-name').value, source:$('#bk-src').value.trim(), dest:$('#bk-dst').value.trim(), mirror:$('#bk-mirror').checked };
+  if(!body.source||!body.dest){ toast('origem e destino obrigatórios',true); return; }
+  const r=await fetch('/api/backups/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(r.ok&&!j.error){ toast('tarefa guardada',false); $('#bk-name').value=''; loadBackups(); } else toast(j.error||'falhou',true);
+};
+$('#bk-runnow').onclick=()=>{ const s=$('#bk-src').value.trim(), d=$('#bk-dst').value.trim();
+  if(!s||!d){ toast('origem e destino obrigatórios',true); return; } bkRun(s,d,$('#bk-mirror').checked,'ad-hoc'); };
+window.bkRun=async (source,dest,mirror,name)=>{
+  if(mirror && !confirm(`Espelho: vai APAGAR no destino "${dest}" tudo o que não está na origem. Continuar?`)) return;
+  showOutput('backup: '+name, 'a correr rsync…');
+  try{
+    const r=await fetch('/api/backups/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,dest,mirror})});
+    const j=await r.json().catch(()=>({}));
+    showOutput('backup: '+name, j.output||j.error||'(sem saída)');
+  }catch(e){ showOutput('backup: '+name,'erro de ligação'); }
+};
+window.bkRemove=async (id)=>{ if(!confirm('Remover esta tarefa? (não apaga ficheiros)')) return;
+  await fetch('/api/backups/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadBackups(); };
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
   const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)

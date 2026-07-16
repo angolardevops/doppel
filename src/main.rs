@@ -7,6 +7,7 @@
 
 mod apt;
 mod auth;
+mod backups;
 mod browse;
 mod cron;
 mod disks;

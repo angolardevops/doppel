@@ -10,8 +10,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::remove::Mode;
 use crate::state::AppState;
 use crate::{
-    apt, auth, browse, cron, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats, sysmon, term,
-    users,
+    apt, auth, backups, browse, cron, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats,
+    sysmon, term, users,
 };
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -355,6 +355,30 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
                 _ => Err("ação desconhecida".into()),
             };
             match r {
+                Ok(text) => respond_json(req, 200, &json!({ "output": text })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
+        // ---- backups (rsync) ----
+        (Method::Get, "/api/backups") => {
+            respond_json(req, 200, &json!({ "jobs": backups::list(&state.run_home) }));
+        }
+        (Method::Post, "/api/backups/add") => {
+            let b = read_body(&mut req);
+            fs_result(req, backups::add(
+                &state.run_home,
+                str_of(&b, "name"), str_of(&b, "source"), str_of(&b, "dest"),
+                b.get("mirror").and_then(|v| v.as_bool()).unwrap_or(false),
+            ));
+        }
+        (Method::Post, "/api/backups/remove") => {
+            let b = read_body(&mut req);
+            let id = b.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+            fs_result(req, backups::remove(&state.run_home, id));
+        }
+        (Method::Post, "/api/backups/run") => {
+            let b = read_body(&mut req);
+            match backups::run(str_of(&b, "source"), str_of(&b, "dest"), b.get("mirror").and_then(|v| v.as_bool()).unwrap_or(false)) {
                 Ok(text) => respond_json(req, 200, &json!({ "output": text })),
                 Err(e) => respond_json(req, 400, &json!({ "error": e })),
             }

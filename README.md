@@ -65,6 +65,7 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 👥 **Gestão de utilizadores** | Listar utilizadores/grupos; criar, mudar password/shell, adicionar a grupos, bloquear e apagar — via `useradd`/`usermod`/`chpasswd`/`userdel` no wizard `sudo`. |
 | ⚙️ **Serviços & timers** | Listar serviços (estado/arranque) e timers; iniciar/parar/reiniciar/ativar/desativar via wizard `sudo`; editor de crontab do utilizador. |
 | 📦 **Pacotes (APT)** | Listar atualizáveis e pesquisar; update/upgrade/install/remove via wizard `sudo`, com a saída mostrada. |
+| 💾 **Backups** | Tarefas `rsync` (origem→destino, cópia ou espelho); correr on-demand com a saída mostrada. |
 | 📜 **Logs** | Ver o journal (`journalctl`) com filtro por unit, prioridade e texto; auto-refresh. |
 | 🌐 **Rede** | Interfaces/IPs (`ip`) e sockets (`ss`) — só leitura. |
 | 🗄️ **Discos** | Árvore de dispositivos (`lsblk`), uso por pasta (`du`) e S.M.A.R.T. (`smartctl`, se instalado). |
