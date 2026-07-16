@@ -433,15 +433,19 @@ $('#clearcache').onclick = async ()=>{
 // ---- processos (tab Sistema) ----
 async function pollProcs(){
   let s; try{ s = await (await fetch('/api/processes')).json(); }catch(e){ return; }
-  $('#ncpu').textContent = s.ncpu+' cores';
+  const nc = Math.max(1, s.ncpu||1);
+  $('#ncpu').textContent = nc+' cores · CPU em % do sistema total';
+  // bar relativo ao máximo do próprio top; valor mostrado = % do sistema (÷ cores)
   const maxCpu = Math.max(1, ...s.top_cpu.map(p=>p.cpu));
   const maxMem = Math.max(1, ...s.top_mem.map(p=>p.mem));
-  $('#cpu-body').innerHTML = s.top_cpu.map(p=>procRow(p,'cpu',maxCpu,maxMem)).join('');
-  $('#mem-body').innerHTML = s.top_mem.map(p=>procRow(p,'mem',maxCpu,maxMem)).join('');
+  $('#cpu-body').innerHTML = s.top_cpu.map(p=>procRow(p,'cpu',maxCpu,maxMem,nc)).join('');
+  $('#mem-body').innerHTML = s.top_mem.map(p=>procRow(p,'mem',maxCpu,maxMem,nc)).join('');
 }
-function procRow(p, primary, maxCpu, maxMem){
+function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
-  const cpuCell=`<td class="num pbar"><i style="width:${cpuPct}%"></i><span>${p.cpu.toFixed(1)}%</span></td>`;
+  const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)
+  const cpuTxt=cpuSys>=0.05? cpuSys.toFixed(1)+'%' : '0%';
+  const cpuCell=`<td class="num pbar"><i style="width:${cpuPct}%"></i><span>${cpuTxt}</span></td>`;
   const memCell=`<td class="num pbar"><i style="width:${memPct}%"></i><span>${fmt(p.mem)}</span></td>`;
   const nameCell=`<td><div class="pname">${esc(p.name)}</div><div class="psvc">pid ${p.pid}</div></td>`;
   const svcCell=`<td class="psvc mono">${esc(p.service)}</td>`;
