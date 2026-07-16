@@ -521,6 +521,16 @@ mod tests {
     }
 
     #[test]
+    fn services_list_e_validacao() {
+        let s = crate::services::list();
+        assert!(!s.is_empty(), "deve listar serviços systemd");
+        assert!(s.iter().all(|x| x.unit.ends_with(".service")));
+        // ação desconhecida e unit inválida → erro sem correr sudo
+        assert!(crate::services::action("walter", "", "cron.service", "hack").is_err());
+        assert!(crate::services::action("walter", "", "a b;service", "start").is_err());
+    }
+
+    #[test]
     fn users_list_e_validacao() {
         let l = crate::users::list();
         assert!(!l.users.is_empty(), "deve listar utilizadores");

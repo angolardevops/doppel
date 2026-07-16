@@ -9,7 +9,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::remove::Mode;
 use crate::state::AppState;
-use crate::{auth, browse, elevate, fsops, procs, remove, scan, stats, sysmon, term, users};
+use crate::{auth, browse, elevate, fsops, procs, remove, scan, services, stats, sysmon, term, users};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
@@ -290,6 +290,14 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let b = read_body(&mut req);
             let rh = b.get("remove_home").and_then(|v| v.as_bool()).unwrap_or(false);
             fs_result(req, users::delete(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "username"), rh));
+        }
+        // ---- serviços systemd (ações via sudo) ----
+        (Method::Get, "/api/services") => {
+            respond_json(req, 200, &json!({ "services": services::list() }));
+        }
+        (Method::Post, "/api/services/action") => {
+            let b = read_body(&mut req);
+            fs_result(req, services::action(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "unit"), str_of(&b, "action")));
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();

@@ -13,6 +13,7 @@ mod procs;
 mod remove;
 mod scan;
 mod server;
+mod services;
 mod state;
 mod stats;
 mod sysmon;

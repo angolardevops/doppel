@@ -205,6 +205,15 @@
   #term{width:100%;height:100%}
   .xterm{height:100%}
 
+  /* serviços */
+  .svcf.on{border-color:var(--acc);color:var(--txt)}
+  .sbadge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:capitalize}
+  .sbadge.active{background:#123024;color:var(--good)}
+  .sbadge.inactive{background:#1c2636;color:var(--dim)}
+  .sbadge.failed{background:#301218;color:var(--bad)}
+  .sen{font-size:11px;color:var(--mut)}
+  .sen.enabled{color:var(--acc)} .sen.masked{color:var(--bad)}
+
   /* utilizadores */
   #ucreate{display:none;margin-top:12px}
   #ucreate.on{display:block}
@@ -268,6 +277,7 @@
     <div class="tab" data-tab="quar" onclick="switchTab('quar')">Quarentena <span class="n" id="qtabn">0</span></div>
     <div class="tab" data-tab="files" onclick="switchTab('files')">Ficheiros</div>
     <div class="tab" data-tab="users" onclick="switchTab('users')">Utilizadores</div>
+    <div class="tab" data-tab="svc" onclick="switchTab('svc')">Serviços</div>
     <div class="tab" data-tab="term" onclick="switchTab('term')">Terminal</div>
     <div class="tab" data-tab="sys" onclick="switchTab('sys')">Sistema</div>
   </div>
@@ -427,6 +437,24 @@
     </div>
   </div>
 
+  <!-- ===== TAB: SERVIÇOS ===== -->
+  <div id="view-svc" style="display:none">
+    <div class="picker">
+      <div class="row">
+        <input class="crumb" id="svc-search" placeholder="filtrar serviços…" style="flex:1" />
+        <button class="btn-ghost svcf on" data-f="running" onclick="svcFilter('running')">A correr</button>
+        <button class="btn-ghost svcf" data-f="enabled" onclick="svcFilter('enabled')">Ativados</button>
+        <button class="btn-ghost svcf" data-f="all" onclick="svcFilter('all')">Todos</button>
+        <button class="btn-ghost" id="svc-reload" onclick="loadServices()">↻</button>
+      </div>
+    </div>
+    <div class="panelbox">
+      <table class="ptab"><thead><tr><th>Serviço</th><th>Estado</th><th>Arranque</th>
+        <th>Descrição</th><th style="width:220px">Ações</th></tr></thead>
+        <tbody id="svc-body"></tbody></table>
+    </div>
+  </div>
+
   <!-- ===== TAB: TERMINAL ===== -->
   <div id="view-term" style="display:none">
     <div class="termbar">
@@ -523,10 +551,12 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-sys').style.display = t==='sys'?'block':'none';
   $('#view-files').style.display = t==='files'?'block':'none';
   $('#view-users').style.display = t==='users'?'block':'none';
+  $('#view-svc').style.display = t==='svc'?'block':'none';
   $('#view-term').style.display = t==='term'?'block':'none';
   if(t==='quar') loadQuar();
   if(t==='files'){ if(!$('#fcrumb').value) $('#fcrumb').value = RUN.run_home||'/'; loadFs($('#fcrumb').value); }
   if(t==='users') loadUsers();
+  if(t==='svc') loadServices();
   if(t==='term') openTerm();
   if(t==='sys'){ pollMonitor(); if(!window.__procTimer) window.__procTimer=setInterval(pollMonitor,2000); }
   else if(window.__procTimer){ clearInterval(window.__procTimer); window.__procTimer=null; }
@@ -807,6 +837,44 @@ window.uLock=(u,lock)=>{ askElevation('/api/users/modify',{username:u,action:loc
 window.uDelete=(u)=>{ if(!confirm(`Apagar o utilizador "${u}"?`)) return;
   const rh=confirm('Apagar também a pasta home (irreversível)? OK = sim, Cancelar = manter home');
   askElevation('/api/users/delete',{username:u,remove_home:rh},`Apagar o utilizador "${u}".`,loadUsers); };
+
+// ---- serviços systemd ----
+let SVCS=[], SVCF='running';
+async function loadServices(){
+  const r = await (await fetch('/api/services')).json();
+  SVCS = r.services||[]; renderServices();
+}
+window.svcFilter=(f)=>{ SVCF=f; document.querySelectorAll('.svcf').forEach(b=>b.classList.toggle('on',b.dataset.f===f)); renderServices(); };
+$('#svc-search').addEventListener('input', renderServices);
+function renderServices(){
+  const q=($('#svc-search').value||'').toLowerCase();
+  let list = SVCS.filter(s=>{
+    if(SVCF==='running' && s.sub!=='running') return false;
+    if(SVCF==='enabled' && s.enabled!=='enabled') return false;
+    if(q && !(s.unit.toLowerCase().includes(q) || (s.description||'').toLowerCase().includes(q))) return false;
+    return true;
+  }).slice(0,400);
+  $('#svc-body').innerHTML = list.map(s=>{
+    const st = s.active==='failed'?'failed':(s.sub==='running'||s.active==='active')?'active':'inactive';
+    const running = s.sub==='running';
+    return `<tr>
+      <td class="mono"><b>${esc(s.unit.replace(/\.service$/,''))}</b></td>
+      <td><span class="sbadge ${st}">${esc(s.sub||s.active)}</span></td>
+      <td><span class="sen ${esc(s.enabled)}">${esc(s.enabled)}</span></td>
+      <td class="psvc">${esc(s.description)}</td>
+      <td><div class="fact">
+        ${running
+          ? `<button class="btn-ghost" title="parar" onclick="svcAct('${jsq(s.unit)}','stop')">⏹</button>
+             <button class="btn-ghost" title="reiniciar" onclick="svcAct('${jsq(s.unit)}','restart')">↻</button>`
+          : `<button class="btn-ghost" title="iniciar" onclick="svcAct('${jsq(s.unit)}','start')">▶</button>`}
+        ${s.enabled==='enabled'
+          ? `<button class="btn-ghost" title="desativar no arranque" onclick="svcAct('${jsq(s.unit)}','disable')">🚫</button>`
+          : `<button class="btn-ghost" title="ativar no arranque" onclick="svcAct('${jsq(s.unit)}','enable')">✅</button>`}
+      </div></td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="psvc" style="padding:16px">sem serviços neste filtro</td></tr>';
+}
+window.svcAct=(unit,action)=>{ const names={start:'iniciar',stop:'parar',restart:'reiniciar',enable:'ativar',disable:'desativar'};
+  askElevation('/api/services/action',{unit,action},`${names[action]||action} o serviço "${unit}".`,loadServices); };
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
   const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)
