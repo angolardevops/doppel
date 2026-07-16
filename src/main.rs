@@ -5,8 +5,10 @@
 //! Sobe um servidor web numa porta alta atribuída pelo SO e abre o browser.
 //! Por omissão analisa o home do utilizador autenticado.
 
+mod apt;
 mod auth;
 mod browse;
+mod cron;
 mod disks;
 mod elevate;
 mod fsops;

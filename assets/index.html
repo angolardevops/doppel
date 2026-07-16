@@ -286,6 +286,7 @@
     <div class="tab" data-tab="files" onclick="switchTab('files')">Ficheiros</div>
     <div class="tab" data-tab="users" onclick="switchTab('users')">Utilizadores</div>
     <div class="tab" data-tab="svc" onclick="switchTab('svc')">Serviços</div>
+    <div class="tab" data-tab="pkg" onclick="switchTab('pkg')">Pacotes</div>
     <div class="tab" data-tab="logs" onclick="switchTab('logs')">Logs</div>
     <div class="tab" data-tab="net" onclick="switchTab('net')">Rede</div>
     <div class="tab" data-tab="disk" onclick="switchTab('disk')">Discos</div>
@@ -469,6 +470,38 @@
       <table class="ptab"><thead><tr><th>Timer</th><th>Ativa</th><th>Próximo / último</th></tr></thead>
         <tbody id="timers-body"><tr><td colspan="3" class="psvc" style="padding:14px">carrega para ver os timers</td></tr></tbody></table>
     </div>
+    <div class="panelbox">
+      <div class="systitle">🗓️ Crontab do utilizador
+        <button class="btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadCron()">↻ recarregar</button>
+        <button class="btn-primary" style="padding:4px 12px;font-size:12px" onclick="saveCron()">Guardar</button></div>
+      <div style="padding:14px">
+        <textarea id="cron-txt" spellcheck="false" placeholder="# min hora dia mês dia-semana comando&#10;0 3 * * 0 /caminho/script.sh"
+          style="width:100%;min-height:150px;background:#05080d;color:#c7d3e2;border:1px solid var(--line);border-radius:10px;padding:12px;font-family:ui-monospace,monospace;font-size:13px"></textarea>
+        <div class="hint" style="margin-top:6px">Formato: <span class="mono">min hora dia mês dia-da-semana comando</span> · gere apenas o teu crontab (sem root).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: PACOTES ===== -->
+  <div id="view-pkg" style="display:none">
+    <div class="picker">
+      <div class="row">
+        <input class="crumb" id="pkg-q" placeholder="pesquisar pacotes…" style="flex:1" />
+        <button class="btn-ghost" onclick="pkgSearch()">🔎 Pesquisar</button>
+        <button class="btn-ghost" onclick="pkgAct('update',null,'Atualizar as listas de pacotes (apt update).')">↻ Atualizar listas</button>
+        <button class="btn-warn" id="pkg-upall">⬆ Atualizar tudo</button>
+      </div>
+    </div>
+    <div class="panelbox">
+      <div class="systitle">⬆ Atualizações disponíveis <span id="pkg-upn" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
+      <table class="ptab"><thead><tr><th>Pacote</th><th>Atual → Nova</th><th>Arq.</th><th style="width:120px">Ação</th></tr></thead>
+        <tbody id="pkg-up"></tbody></table>
+    </div>
+    <div class="panelbox" id="pkg-searchbox" style="display:none">
+      <div class="systitle">🔎 Resultados</div>
+      <table class="ptab"><thead><tr><th>Pacote</th><th>Descrição</th><th style="width:120px">Ação</th></tr></thead>
+        <tbody id="pkg-results"></tbody></table>
+    </div>
   </div>
 
   <!-- ===== TAB: LOGS ===== -->
@@ -566,6 +599,13 @@
     </div>
   </div>
 </div>
+<div class="ov" id="out-ov">
+  <div class="modal" style="max-width:820px;width:94%">
+    <h3 id="out-title">Saída</h3>
+    <pre id="out-text" class="logbox" style="max-height:60vh;margin:10px 0"></pre>
+    <div class="row"><button class="btn-primary" id="out-close">Fechar</button></div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script src="/vendor/xterm.js"></script>
@@ -618,6 +658,7 @@ window.switchTab = (t)=>{ TAB=t;
   $('#view-files').style.display = t==='files'?'block':'none';
   $('#view-users').style.display = t==='users'?'block':'none';
   $('#view-svc').style.display = t==='svc'?'block':'none';
+  $('#view-pkg').style.display = t==='pkg'?'block':'none';
   $('#view-logs').style.display = t==='logs'?'block':'none';
   $('#view-net').style.display = t==='net'?'block':'none';
   $('#view-disk').style.display = t==='disk'?'block':'none';
@@ -626,7 +667,8 @@ window.switchTab = (t)=>{ TAB=t;
   if(t==='quar') loadQuar();
   if(t==='files'){ if(!$('#fcrumb').value) $('#fcrumb').value = RUN.run_home||'/'; loadFs($('#fcrumb').value); }
   if(t==='users') loadUsers();
-  if(t==='svc') loadServices();
+  if(t==='svc'){ loadServices(); loadCron(); }
+  if(t==='pkg') loadPkg();
   if(t==='logs') loadLogs();
   if(t==='net') loadNet();
   if(t==='disk'){ if(!$('#du-path').value) $('#du-path').value = RUN.run_home||'/'; loadDisks(); }
@@ -1011,7 +1053,7 @@ async function loadDisks(){
   $('#disk-body').innerHTML = rows.join('') || '<tr><td colspan="7" class="psvc" style="padding:14px">sem dispositivos</td></tr>';
 }
 window.smart=(dev)=>{ askElevation('/api/disks/smart',{dev},`Ler S.M.A.R.T. de ${dev} (requer root).`,
-  (j)=> alert('S.M.A.R.T. · '+dev+'\n\n'+(j.output||'(sem saída)')) ); };
+  (j)=> showOutput('S.M.A.R.T. · '+dev, j.output) ); };
 async function loadDu(){
   const p=$('#du-path').value.trim(); if(!p) return;
   $('#du-body').innerHTML='<tr><td colspan="2" class="psvc" style="padding:14px">a calcular…</td></tr>';
@@ -1023,6 +1065,51 @@ async function loadDu(){
       return `<tr><td class="mono">${esc(e.path)}</td>
         <td class="num pbar"><i style="width:${pct}%"></i><span>${fmt(e.size)}</span></td></tr>`; }).join('');
   }catch(e){ $('#du-body').innerHTML='<tr><td colspan="2" class="psvc" style="padding:14px">erro</td></tr>'; }
+}
+
+// ---- modal de saída ----
+function showOutput(title, text){ $('#out-title').textContent=title; $('#out-text').textContent=text||'(sem saída)'; $('#out-ov').classList.add('on'); }
+$('#out-close').onclick=()=> $('#out-ov').classList.remove('on');
+
+// ---- pacotes apt ----
+async function loadPkg(){
+  const r = await (await fetch('/api/pkg/upgradable')).json();
+  const ps = r.packages||[];
+  $('#pkg-upn').textContent = ps.length+' atualizáveis';
+  $('#pkg-upall').disabled = ps.length===0;
+  $('#pkg-up').innerHTML = ps.map(p=>`<tr>
+    <td class="mono"><b>${esc(p.name)}</b></td>
+    <td class="psvc mono">${esc(p.from)} → <span style="color:var(--acc)">${esc(p.to)}</span></td>
+    <td class="psvc">${esc(p.arch)}</td>
+    <td><button class="btn-ghost" style="padding:3px 9px;font-size:11px" onclick="pkgAct('install','${jsq(p.name)}','Atualizar ${esc(p.name)}.')">atualizar</button></td>
+  </tr>`).join('') || '<tr><td colspan="4" class="psvc" style="padding:14px">tudo atualizado 🎉</td></tr>';
+}
+$('#pkg-upall').onclick=()=> pkgAct('upgrade',null,'Atualizar TODOS os pacotes (apt upgrade). Pode demorar.');
+$('#pkg-q').addEventListener('keydown',e=>{ if(e.key==='Enter') pkgSearch(); });
+async function pkgSearch(){
+  const q=$('#pkg-q').value.trim(); if(!q) return;
+  $('#pkg-searchbox').style.display='block';
+  $('#pkg-results').innerHTML='<tr><td colspan="3" class="psvc" style="padding:14px">a pesquisar…</td></tr>';
+  const r = await (await fetch('/api/pkg/search?q='+encodeURIComponent(q))).json();
+  $('#pkg-results').innerHTML = (r.results||[]).map(p=>`<tr>
+    <td class="mono"><b>${esc(p.name)}</b></td><td class="psvc">${esc(p.description)}</td>
+    <td><button class="btn-ghost" style="padding:3px 9px;font-size:11px" onclick="pkgAct('install','${jsq(p.name)}','Instalar ${esc(p.name)}.')">instalar</button></td>
+  </tr>`).join('') || '<tr><td colspan="3" class="psvc" style="padding:14px">sem resultados</td></tr>';
+}
+window.pkgAct=(action,name,msg)=>{
+  askElevation('/api/pkg/action', name?{action,name}:{action}, msg||`apt ${action}`, (j)=>{
+    showOutput('apt '+action, j.output); loadPkg(); });
+};
+
+// ---- cron ----
+async function loadCron(){
+  const r = await (await fetch('/api/cron')).json();
+  $('#cron-txt').value = r.content||'';
+}
+async function saveCron(){
+  const r = await fetch('/api/cron',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:$('#cron-txt').value})});
+  const j = await r.json().catch(()=>({}));
+  if(r.ok && !j.error) toast('crontab guardado',false); else toast(j.error||'crontab inválido',true);
 }
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);

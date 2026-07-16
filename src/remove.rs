@@ -521,6 +521,21 @@ mod tests {
     }
 
     #[test]
+    fn apt_e_cron() {
+        // upgradable/search não entram em pânico (podem vir vazios em CI)
+        let _ = crate::apt::upgradable();
+        assert!(crate::apt::search("!!inv@lid").is_empty(), "query inválida → sem resultados");
+        // validação de pacote: ação com nome inválido → erro sem sudo
+        assert!(crate::apt::install("walter", "", "pac ote;rm").is_err());
+        assert!(crate::apt::remove("walter", "", "-flag").is_err());
+        // cron: ler não entra em pânico
+        let _ = crate::cron::get();
+        // set demasiado grande → erro
+        let big = "x".repeat(70 * 1024);
+        assert!(crate::cron::set(&big).is_err());
+    }
+
+    #[test]
     fn net_disks_logs_timers() {
         // rede: deve haver pelo menos o loopback
         let n = crate::netinfo::info();

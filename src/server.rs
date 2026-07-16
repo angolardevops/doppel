@@ -10,7 +10,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::remove::Mode;
 use crate::state::AppState;
 use crate::{
-    auth, browse, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats, sysmon, term, users,
+    apt, auth, browse, cron, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats, sysmon, term,
+    users,
 };
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -333,6 +334,38 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
                 Ok(text) => respond_json(req, 200, &json!({ "output": text })),
                 Err(e) => respond_json(req, 400, &json!({ "error": e })),
             }
+        }
+        // ---- pacotes APT ----
+        (Method::Get, "/api/pkg/upgradable") => {
+            respond_json(req, 200, &json!({ "packages": apt::upgradable() }));
+        }
+        (Method::Get, "/api/pkg/search") => {
+            let q = query_param(&query, "q").unwrap_or_default();
+            respond_json(req, 200, &json!({ "results": apt::search(&q) }));
+        }
+        (Method::Post, "/api/pkg/action") => {
+            let b = read_body(&mut req);
+            let (u, pw) = (state.run_user.as_str(), str_of(&b, "password"));
+            let name = str_of(&b, "name");
+            let r = match str_of(&b, "action") {
+                "update" => apt::update(u, pw),
+                "upgrade" => apt::upgrade(u, pw),
+                "install" => apt::install(u, pw, name),
+                "remove" => apt::remove(u, pw, name),
+                _ => Err("ação desconhecida".into()),
+            };
+            match r {
+                Ok(text) => respond_json(req, 200, &json!({ "output": text })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
+        // ---- cron do utilizador ----
+        (Method::Get, "/api/cron") => {
+            respond_json(req, 200, &json!({ "content": cron::get() }));
+        }
+        (Method::Post, "/api/cron") => {
+            let b = read_body(&mut req);
+            fs_result(req, cron::set(str_of(&b, "content")));
         }
         (Method::Post, "/api/cache/clear") => {
             state.clear_caches();
