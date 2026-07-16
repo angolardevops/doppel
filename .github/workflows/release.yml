@@ -1,0 +1,74 @@
+name: release
+
+# Gera binários Linux (glibc) para x86_64 e aarch64 e anexa-os ao Release
+# sempre que uma tag `v*` é criada. Também pode ser disparado manualmente.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset: doppel-linux-x64
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            asset: doppel-linux-arm64
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Build nativo x86_64 — precisa do libpam (dev) no runner.
+      - name: Instalar libpam (nativo)
+        if: ${{ !matrix.cross }}
+        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0-dev
+
+      - name: Build (nativo)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # Build cross aarch64 — o `cross` instala o libpam arm64 no contentor (ver Cross.toml).
+      - name: Instalar cross
+        if: ${{ matrix.cross }}
+        run: cargo install cross --locked
+
+      - name: Build (cross)
+        if: ${{ matrix.cross }}
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Preparar artefacto
+        run: |
+          cp "target/${{ matrix.target }}/release/doppel" "${{ matrix.asset }}"
+          strip "${{ matrix.asset }}" || true
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+
+      - name: Anexar ao Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
+
+      # Em disparo manual (sem tag) guarda como artefacto do workflow.
+      - name: Guardar artefacto (manual)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256

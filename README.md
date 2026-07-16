@@ -58,15 +58,24 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 
 ## Instalação
 
-### Binário pré‑compilado (Linux x64)
+### Binário pré‑compilado (Linux glibc)
 
-Descarrega o binário da [página de Releases](https://github.com/angolardevops/doppel/releases):
+Descarrega o binário para a tua arquitetura da
+[página de Releases](https://github.com/angolardevops/doppel/releases):
 
 ```bash
+# x86_64
 curl -L -o doppel https://github.com/angolardevops/doppel/releases/latest/download/doppel-linux-x64
+# ou aarch64 (ARM64)
+curl -L -o doppel https://github.com/angolardevops/doppel/releases/latest/download/doppel-linux-arm64
+
 chmod +x doppel
 ./doppel --help
 ```
+
+> Doppel depende do PAM do sistema, que é específico do Linux e carrega os seus
+> módulos dinamicamente — por isso os binários são **Linux (glibc)**; não há build
+> estático (musl), macOS ou Windows. Cada release traz também um `.sha256`.
 
 ### A partir do código‑fonte
 
