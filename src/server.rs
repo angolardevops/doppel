@@ -71,6 +71,7 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
                 "authed": authed,
                 "run_user": state.run_user,
                 "run_home": state.run_home.to_string_lossy(),
+                "ws_port": *state.ws_port.lock().unwrap(),
             }));
             return;
         }

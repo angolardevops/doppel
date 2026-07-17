@@ -713,6 +713,71 @@ mod tests {
         assert!(crate::elevate::chown("walter", "pw", "/tmp/x", "mau dono!", false).is_err());
     }
 
+    /// Terminal por WebSocket end-to-end: handshake com sessão válida, envia um
+    /// comando em frame binário e confirma que a saída do shell volta pelo WS.
+    /// (Emitimos a sessão em processo — não é preciso a password do PAM.)
+    #[test]
+    fn ws_terminal_end_to_end() {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpStream;
+        use std::sync::Arc;
+
+        std::env::set_var("SHELL", "/bin/sh");
+        let st = Arc::new(mkstate(tmp("wsscan"), tmp("wshome")));
+        let token = st.sessions.create();
+        let port = crate::wsterm::listen(Arc::clone(&st)).expect("listener");
+
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("ligar");
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+
+        // handshake com o cookie de sessão (os cookies não são por-porta)
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let req = format!(
+            "GET /term HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nCookie: doppel_sess={token}\r\n\r\n"
+        );
+        s.write_all(req.as_bytes()).unwrap();
+
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            if s.read(&mut b).unwrap_or(0) == 0 {
+                break;
+            }
+            head.push(b[0]);
+        }
+        let head = String::from_utf8_lossy(&head);
+        assert!(head.starts_with("HTTP/1.1 101"), "devia trocar de protocolo; veio: {head:?}");
+        assert!(
+            head.contains(&crate::ws::accept_key(key)),
+            "Sec-WebSocket-Accept tem de bater certo com o RFC 6455"
+        );
+
+        // o cliente TEM de mascarar os frames que envia
+        let payload = b"echo WS_OK_42\n";
+        let mask = [0x11u8, 0x22, 0x33, 0x44];
+        let mut frame = vec![0x80 | crate::ws::OP_BINARY, 0x80 | payload.len() as u8];
+        frame.extend_from_slice(&mask);
+        frame.extend(payload.iter().enumerate().map(|(i, x)| x ^ mask[i % 4]));
+        s.write_all(&frame).unwrap();
+
+        // lê frames até ver o eco do comando
+        let mut seen = String::new();
+        for _ in 0..40 {
+            match crate::ws::read_frame(&mut s) {
+                Ok(Some((crate::ws::OP_BINARY, d))) => {
+                    seen.push_str(&String::from_utf8_lossy(&d));
+                    if seen.contains("WS_OK_42") {
+                        break;
+                    }
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(seen.contains("WS_OK_42"), "a saída do shell devia chegar pelo WS; veio: {seen:?}");
+    }
+
     #[test]
     fn terminal_pty_roundtrip() {
         std::env::set_var("SHELL", "/bin/sh");

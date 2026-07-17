@@ -26,6 +26,8 @@ mod stats;
 mod sysmon;
 mod term;
 mod users;
+mod ws;
+mod wsterm;
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
@@ -121,6 +123,12 @@ fn main() {
 
     let server = Server::from_listener(listener, None).expect("falha ao iniciar o servidor HTTP");
     let state = Arc::new(AppState::new(run_user.clone(), run_home, root, q_dir));
+
+    // Listener do terminal (WebSocket) — porta própria, 127.0.0.1.
+    match wsterm::listen(Arc::clone(&state)) {
+        Ok(p) => *state.ws_port.lock().unwrap() = p,
+        Err(e) => eprintln!("aviso: terminal indisponível ({e})"),
+    }
 
     // Amostrador de KPIs em background (para os gráficos históricos).
     {

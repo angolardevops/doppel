@@ -1706,7 +1706,7 @@ function toast(msg,err){ const t=$('#toast'); t.textContent=msg; t.className='to
   setTimeout(()=>t.className='toast',4500); }
 
 // ---- terminal embebido ----
-let TERM=null, TERMID=null, TERMRO=null;
+let TERM=null, TERMRO=null;
 function openTerm(){
   $('#term-user').textContent = RUN.run_user||'';
   if(TERM){ try{window.__fit&&window.__fit.fit();}catch(e){} TERM.focus(); return; }
@@ -1719,28 +1719,33 @@ function openTerm(){
     $('#term-accel').textContent='ativa (GPU)'; }
   catch(e){ $('#term-accel').textContent='indisponível — canvas'; }
   try{ fit.fit(); }catch(e){}
-  TERM.onData(d=>{ if(TERMID) fetch('/api/term/input?id='+TERMID,{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({data:d})}); });
-  TERMRO = new ResizeObserver(()=>{ if(!TERM)return; try{fit.fit();}catch(e){}
-    if(TERMID) fetch('/api/term/resize?id='+TERMID,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({rows:TERM.rows,cols:TERM.cols})}); });
+  // cada tecla vai como frame binário na ligação já aberta (sem HTTP por tecla)
+  TERM.onData(d=>{ if(TWS && TWS.readyState===1) TWS.send(new TextEncoder().encode(d)); });
+  TERMRO = new ResizeObserver(()=>{ if(!TERM)return; try{fit.fit();}catch(e){} sendResize(); });
   TERMRO.observe(document.querySelector('.termwrap'));
   startTermSession();
 }
+// Transporte: WebSocket full-duplex (mesma técnica do delonix-paas).
+// Antes: streaming GET para a saída + um POST por CADA tecla → cada tecla era
+// um pedido HTTP completo (lento) e o stream prendia um worker do servidor.
+// Agora: 1 ligação; binário = bytes crus; texto = {cols,rows} para redimensionar.
+let TWS=null;
 async function startTermSession(){
-  let r; try{ r = await (await fetch('/api/term/new',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({rows:TERM.rows,cols:TERM.cols})})).json(); }catch(e){ toast('falha a abrir terminal',true); return; }
-  if(r.error){ toast(r.error,true); return; }
-  TERMID = r.id;
-  const resp = await fetch('/api/term/stream?id='+TERMID);
-  const reader = resp.body.getReader();
-  (async()=>{ try{ for(;;){ const {done,value}=await reader.read(); if(done)break; TERM.write(value); } }catch(e){}
-    TERM.write('\r\n\x1b[90m[sessão terminada — carrega em ↻ Reiniciar]\x1b[0m\r\n'); TERMID=null; })();
-  TERM.focus();
+  const port = RUN.ws_port;
+  if(!port){ TERM.write('\r\n\x1b[31m[terminal indisponível: listener não arrancou]\x1b[0m\r\n'); return; }
+  try{ TWS = new WebSocket(`ws://${location.hostname}:${port}/term`); }
+  catch(e){ TERM.write('\r\n\x1b[31m[falha a ligar ao terminal]\x1b[0m\r\n'); return; }
+  TWS.binaryType = 'arraybuffer';
+  TWS.onopen = ()=>{ sendResize(); TERM.focus(); };
+  TWS.onmessage = ev => TERM.write(new Uint8Array(ev.data));
+  TWS.onclose = ()=>{ TWS=null; TERM.write('\r\n\x1b[90m[sessão terminada — carrega em ↻ Reiniciar]\x1b[0m\r\n'); };
+  TWS.onerror = ()=>{ TERM.write('\r\n\x1b[31m[erro de ligação ao terminal]\x1b[0m\r\n'); };
 }
-$('#term-restart').onclick = async ()=>{ if(TERMID) fetch('/api/term/close?id='+TERMID,{method:'POST'});
-  TERMID=null; if(TERM) TERM.reset(); await startTermSession(); };
-window.addEventListener('beforeunload',()=>{ if(TERMID) navigator.sendBeacon('/api/term/close?id='+TERMID); });
+function sendResize(){
+  if(TWS && TWS.readyState===1 && TERM) TWS.send(JSON.stringify({cols:TERM.cols, rows:TERM.rows}));
+}
+$('#term-restart').onclick = async ()=>{ if(TWS) TWS.close(); TWS=null; if(TERM) TERM.reset(); await startTermSession(); };
+window.addEventListener('beforeunload',()=>{ if(TWS) TWS.close(); });
 
 // ---- idioma ----
 $('#lang-sel').value = LANG;

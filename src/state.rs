@@ -189,6 +189,8 @@ pub struct AppState {
     pub history: Mutex<VecDeque<Sample>>,
     /// Sessões de terminal ativas (id → PTY).
     pub terms: Mutex<HashMap<String, crate::term::TermSession>>,
+    /// Porta do listener WebSocket do terminal (0 = indisponível).
+    pub ws_port: Mutex<u16>,
     /// Cache do geoip (ms, valor).
     pub geoip_cache: Mutex<Option<(u128, serde_json::Value)>>,
     /// Cache de geolocalização por IP remoto (mapa de tráfego).
@@ -219,6 +221,7 @@ impl AppState {
             proc_sys: Mutex::new(System::new()),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_CAP)),
             terms: Mutex::new(HashMap::new()),
+            ws_port: Mutex::new(0),
             geoip_cache: Mutex::new(None),
             ipgeo_cache: Mutex::new(HashMap::new()),
             net_now: Mutex::new((0.0, 0.0, 0, 0)),
