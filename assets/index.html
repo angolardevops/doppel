@@ -586,6 +586,7 @@
         <button class="btn-primary" onclick="netPing()">📡 Ping</button>
         <button class="btn-ghost" onclick="netTrace()">🛰 Traceroute</button>
         <div class="spacer"></div>
+        <button class="btn-warn" id="speed-btn">⚡ Testar velocidade</button>
         <button class="btn-ghost" onclick="loadNet()">↻ Recarregar</button>
       </div>
     </div>
@@ -1227,11 +1228,29 @@ function renderConnKpis(){
     kpi('IP público','🌍', ok?esc(g.query):'—', ok?esc(g.isp||''):'sem ligação', null),
     kpi('Operador','🛰️', ok?esc((g.as||'').split(' ').slice(1).join(' ')||g.isp||'—'):'—', ok?esc(g.as||''):'', null),
     kpi('Localização','📍', ok?esc(g.city||g.country||'—'):'—', ok?`${esc(g.regionName||'')}${g.regionName?', ':''}${esc(g.country||'')} · ${esc(g.timezone||'')}`:'', null),
-    kpi('Download','⬇️', fmt(NETIO.in)+'/s', 'total '+fmt(NETIO.rx), null),
-    kpi('Upload','⬆️', fmt(NETIO.out)+'/s', 'total '+fmt(NETIO.tx), null),
+    kpi('Tráfego ⬇','📥', fmt(NETIO.in)+'/s', 'agora · total '+fmt(NETIO.rx), null),
+    kpi('Tráfego ⬆','📤', fmt(NETIO.out)+'/s', 'agora · total '+fmt(NETIO.tx), null),
   ];
+  if(SPEED){
+    const mbps=v=>(v/1e6).toFixed(1)+' Mbps';
+    cards.push(kpi('Velocidade ⬇','⚡', mbps(SPEED.down_bps), `medido · ${(SPEED.down_bytes/1e6).toFixed(0)} MB`, Math.min(100,SPEED.down_bps/1e6)));
+    cards.push(kpi('Velocidade ⬆','🚀', mbps(SPEED.up_bps), `medido · ${(SPEED.up_bytes/1e6).toFixed(0)} MB`, Math.min(100,SPEED.up_bps/1e6)));
+    cards.push(kpi('Latência','⏱️', SPEED.latency_ms.toFixed(1)+' ms', `jitter ${SPEED.jitter_ms.toFixed(1)} ms · ${esc(SPEED.server)}`, null));
+  }
   $('#conn-kpis').innerHTML = cards.join('');
 }
+let SPEED=null;
+$('#speed-btn')&&($('#speed-btn').onclick = async ()=>{
+  const b=$('#speed-btn'); b.disabled=true; b.textContent='⏳ a medir (~15s)…';
+  try{
+    const r = await fetch('/api/speedtest',{method:'POST'});
+    const j = await r.json().catch(()=>({}));
+    if(j.error){ toast(j.error,true); }
+    else { SPEED=j; renderConnKpis();
+      toast(`⬇ ${(j.down_bps/1e6).toFixed(1)} Mbps · ⬆ ${(j.up_bps/1e6).toFixed(1)} Mbps · ${j.latency_ms.toFixed(0)} ms`,false); }
+  }catch(e){ toast('falha no teste de velocidade',true); }
+  b.disabled=false; b.textContent='⚡ Testar velocidade';
+});
 let TRAFTICK=0;
 async function pollNetIo(){
   try{ NETIO = await (await fetch('/api/netio')).json(); renderConnKpis(); }catch(e){}

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -120,6 +120,146 @@ pub fn net_totals() -> (u64, u64) {
 /// Taxa de rede atual (in/s, out/s, rx, tx) — publicada pelo sampler.
 pub fn net_now(state: &AppState) -> (f64, f64, u64, u64) {
     *state.net_now.lock().unwrap()
+}
+
+// ---- teste de velocidade (nativo, sem speedtest-cli) -----------------------
+
+/// Servidor de teste: a Cloudflare serve `__down`/`__up` em HTTP simples e é
+/// anycast (responde do PoP mais próximo), por isso mede a ligação e não a
+/// distância a um servidor longínquo.
+const SPEED_HOST: &str = "speed.cloudflare.com";
+
+#[derive(Serialize)]
+pub struct Speed {
+    pub down_bps: f64,
+    pub up_bps: f64,
+    pub latency_ms: f64,
+    pub jitter_ms: f64,
+    pub server: String,
+    pub down_bytes: u64,
+    pub up_bytes: u64,
+}
+
+/// Latência TCP (min) e jitter (desvio médio) em N ligações ao servidor.
+fn tcp_latency(host: &str, samples: usize) -> (f64, f64) {
+    use std::net::ToSocketAddrs;
+    let addr = match (host, 80u16).to_socket_addrs().ok().and_then(|mut a| a.next()) {
+        Some(a) => a,
+        None => return (0.0, 0.0),
+    };
+    let mut rtts = Vec::new();
+    for _ in 0..samples {
+        let t0 = Instant::now();
+        if TcpStream::connect_timeout(&addr, Duration::from_secs(4)).is_ok() {
+            rtts.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    if rtts.is_empty() {
+        return (0.0, 0.0);
+    }
+    let min = rtts.iter().cloned().fold(f64::MAX, f64::min);
+    let avg = rtts.iter().sum::<f64>() / rtts.len() as f64;
+    let jitter = rtts.iter().map(|r| (r - avg).abs()).sum::<f64>() / rtts.len() as f64;
+    (min, jitter)
+}
+
+/// Descarrega `bytes` medindo o débito. Conta a partir do 1º byte do corpo
+/// (exclui a latência inicial) e descarta os dados (memória constante).
+fn measure_download(bytes: u64, cap: Duration) -> Result<(u64, f64), String> {
+    let mut s = TcpStream::connect((SPEED_HOST, 80)).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let req = format!(
+        "GET /__down?bytes={bytes} HTTP/1.0\r\nHost: {SPEED_HOST}\r\nUser-Agent: doppel\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+
+    let mut buf = vec![0u8; 64 * 1024];
+    let (mut total, mut started) = (0u64, None::<Instant>);
+    let mut header_done = false;
+    let mut pending = Vec::new();
+    loop {
+        let n = match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        if !header_done {
+            // salta os cabeçalhos; o corpo começa depois de \r\n\r\n
+            pending.extend_from_slice(&buf[..n]);
+            if let Some(p) = pending.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_done = true;
+                started = Some(Instant::now());
+                total += (pending.len() - (p + 4)) as u64;
+            }
+        } else {
+            total += n as u64;
+        }
+        if let Some(t) = started {
+            if t.elapsed() > cap {
+                break;
+            }
+        }
+    }
+    let secs = started.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+    if total == 0 || secs <= 0.0 {
+        return Err("download sem dados".into());
+    }
+    Ok((total, secs))
+}
+
+/// Envia `bytes` medindo o débito de subida.
+fn measure_upload(bytes: u64, cap: Duration) -> Result<(u64, f64), String> {
+    let mut s = TcpStream::connect((SPEED_HOST, 80)).map_err(|e| e.to_string())?;
+    s.set_write_timeout(Some(Duration::from_secs(10))).ok();
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let req = format!(
+        "POST /__up HTTP/1.0\r\nHost: {SPEED_HOST}\r\nUser-Agent: doppel\r\n\
+         Content-Type: application/octet-stream\r\nContent-Length: {bytes}\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+
+    let chunk = vec![0u8; 64 * 1024];
+    let t0 = Instant::now();
+    let mut sent = 0u64;
+    while sent < bytes {
+        let n = std::cmp::min(chunk.len() as u64, bytes - sent) as usize;
+        if s.write_all(&chunk[..n]).is_err() {
+            break;
+        }
+        sent += n as u64;
+        if t0.elapsed() > cap {
+            break;
+        }
+    }
+    let _ = s.flush();
+    // IMPORTANTE: `write_all` devolve quando os bytes entram no buffer do kernel,
+    // não quando saem para a rede — parar o cronómetro aqui mediria o buffer e
+    // inflacionaria o resultado. Só paramos quando o servidor responde, o que
+    // prova que os dados chegaram mesmo ao outro lado.
+    let mut sink = Vec::new();
+    let _ = s.read_to_end(&mut sink);
+    let secs = t0.elapsed().as_secs_f64();
+    if sent == 0 || secs <= 0.0 {
+        return Err("upload sem dados".into());
+    }
+    Ok((sent, secs))
+}
+
+/// Teste de velocidade completo (download, upload, latência e jitter).
+/// Consome largura de banda real — só deve correr a pedido do utilizador.
+pub fn speedtest() -> Result<Speed, String> {
+    let (latency_ms, jitter_ms) = tcp_latency(SPEED_HOST, 5);
+    let (dbytes, dsecs) = measure_download(25_000_000, Duration::from_secs(8))?;
+    let (ubytes, usecs) = measure_upload(10_000_000, Duration::from_secs(8))?;
+    Ok(Speed {
+        down_bps: (dbytes as f64 * 8.0) / dsecs,
+        up_bps: (ubytes as f64 * 8.0) / usecs,
+        latency_ms,
+        jitter_ms,
+        server: format!("{SPEED_HOST} (anycast)"),
+        down_bytes: dbytes,
+        up_bytes: ubytes,
+    })
 }
 
 // ---- mapa de tráfego: para onde as minhas ligações vão ---------------------

@@ -187,6 +187,13 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Get, "/api/traffic") => {
             respond_json(req, 200, &json!({ "endpoints": pubnet::traffic(state) }));
         }
+        (Method::Post, "/api/speedtest") => {
+            // consome largura de banda real → só a pedido explícito do utilizador
+            match pubnet::speedtest() {
+                Ok(s) => respond_json(req, 200, &json!(s)),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
         (Method::Get, "/api/neighbors") => {
             respond_json(req, 200, &json!({
                 "devices": pubnet::neighbors(),

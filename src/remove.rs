@@ -567,6 +567,26 @@ mod tests {
         assert!(crate::cron::set(&big).is_err());
     }
 
+    /// Validação ao vivo do speedtest (consome largura de banda real):
+    ///   cargo test --release -- --ignored --nocapture velocidade_real
+    #[test]
+    #[ignore]
+    fn velocidade_real() {
+        let s = crate::pubnet::speedtest().expect("speedtest");
+        println!(
+            "\n[speed] ⬇ {:.2} Mbps ({} MB)  ⬆ {:.2} Mbps ({} MB)  latência {:.1} ms  jitter {:.1} ms  via {}",
+            s.down_bps / 1e6,
+            s.down_bytes / 1_000_000,
+            s.up_bps / 1e6,
+            s.up_bytes / 1_000_000,
+            s.latency_ms,
+            s.jitter_ms,
+            s.server
+        );
+        assert!(s.down_bps > 0.0 && s.up_bps > 0.0, "deve medir débito real");
+        assert!(s.latency_ms > 0.0, "deve medir latência");
+    }
+
     /// Validação ao vivo do mapa de tráfego (usa a Internet — ip-api batch):
     ///   cargo test --release -- --ignored --nocapture trafego_real
     #[test]
