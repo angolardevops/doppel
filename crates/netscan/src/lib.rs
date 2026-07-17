@@ -191,7 +191,9 @@ pub fn reverse_dns(ip: Ipv4Addr) -> Option<String> {
     let mut sa: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     sa.sin_family = libc::AF_INET as libc::sa_family_t;
     sa.sin_addr.s_addr = u32::from(ip).to_be();
-    let mut host = [0i8; 256];
+    // `c_char` é i8 em x86_64 mas u8 em aarch64 — usar o alias mantém isto
+    // portável (com `i8` fixo, a compilação em ARM falha).
+    let mut host = [0 as libc::c_char; 256];
     let r = unsafe {
         libc::getnameinfo(
             &sa as *const libc::sockaddr_in as *const libc::sockaddr,

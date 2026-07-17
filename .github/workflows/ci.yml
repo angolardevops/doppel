@@ -1,0 +1,41 @@
+name: ci
+
+# Corre em cada push/PR — apanha problemas ANTES de se cortar uma tag.
+# Existe porque um `[0i8; 256]` (c_char é u8 em aarch64, i8 em x86_64) compilava
+# em x86 mas partia o build ARM, e isso só aparecia no release — publicando
+# binários a meio. O cross-check abaixo apanha essa classe de bug em segundos.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Instalar libpam (dev)
+        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0g-dev
+      - name: Testes
+        run: cargo test --release --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        continue-on-error: true
+
+  cross-check-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Instalar libpam (dev)
+        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0g-dev
+      # `cargo check` não linka, por isso não precisa do libpam de arm64 —
+      # mesmo assim valida os tipos de FFI para aarch64.
+      - name: Verificar compilação para aarch64
+        run: cargo check --release --workspace --target aarch64-unknown-linux-gnu
