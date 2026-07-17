@@ -16,6 +16,7 @@ mod fsops;
 mod logs;
 mod netinfo;
 mod procs;
+mod pubnet;
 mod remove;
 mod scan;
 mod server;

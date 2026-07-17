@@ -568,6 +568,20 @@ mod tests {
     }
 
     #[test]
+    fn pubnet_vizinhos_e_io() {
+        // totais de rede: contadores reais (>0 em qualquer máquina com tráfego)
+        let (rx, tx) = crate::pubnet::net_totals();
+        assert!(rx > 0 || tx > 0, "deve ler contadores de /proc/net/dev");
+        // vizinhos: não entra em pânico; cada entrada tem MAC
+        let n = crate::pubnet::neighbors();
+        assert!(n.iter().all(|d| !d.mac.is_empty() && !d.ip.is_empty()));
+        // taxa publicada pelo sampler: começa a zero e é lida sem erro
+        let st = mkstate(tmp("pn1"), tmp("pnhome"));
+        let (i, o, _, _) = crate::pubnet::net_now(&st);
+        assert_eq!((i, o), (0.0, 0.0));
+    }
+
+    #[test]
     fn net_disks_logs_timers() {
         // rede: deve haver pelo menos o loopback
         let n = crate::netinfo::info();

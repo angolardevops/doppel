@@ -16,6 +16,7 @@ pub fn sample_loop(state: &Arc<AppState>) {
     let mut sys = System::new();
     let mut tick: u64 = 0;
     let mut last_gpu: f32 = 0.0;
+    let (mut prx, mut ptx) = crate::pubnet::net_totals();
     loop {
         sys.refresh_cpu_all();
         sys.refresh_memory();
@@ -33,7 +34,15 @@ pub fn sample_loop(state: &Arc<AppState>) {
         if tick % 3 == 0 {
             last_gpu = gpu_snapshot().first().and_then(|g| g.util).unwrap_or(0.0);
         }
-        state.push_sample(Sample { t: now(), cpu, mem, temp, gpu: last_gpu });
+        // taxa de rede desde o tick anterior (intervalo de 3s)
+        let (rx, tx) = crate::pubnet::net_totals();
+        let net_in = rx.saturating_sub(prx) as f64 / 3.0;
+        let net_out = tx.saturating_sub(ptx) as f64 / 3.0;
+        prx = rx;
+        ptx = tx;
+        // fonte única da taxa de rede — lida por /api/monitor e /api/netio
+        *state.net_now.lock().unwrap() = (net_in, net_out, rx, tx);
+        state.push_sample(Sample { t: now(), cpu, mem, temp, gpu: last_gpu, net_in, net_out });
         tick += 1;
         std::thread::sleep(Duration::from_secs(3));
     }

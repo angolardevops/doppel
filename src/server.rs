@@ -10,8 +10,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::remove::Mode;
 use crate::state::AppState;
 use crate::{
-    apt, auth, backups, browse, cron, disks, elevate, fsops, logs, netinfo, procs, remove, scan, services, stats,
-    sysmon, term, users,
+    apt, auth, backups, browse, cron, disks, elevate, fsops, logs, netinfo, procs, pubnet, remove, scan, services,
+    stats, sysmon, term, users,
 };
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -19,6 +19,10 @@ const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
 const XTERM_CSS: &str = include_str!("../assets/vendor/xterm.css");
 const ADDON_FIT: &str = include_str!("../assets/vendor/addon-fit.js");
 const ADDON_WEBGL: &str = include_str!("../assets/vendor/addon-webgl.js");
+const LEAFLET_JS: &str = include_str!("../assets/vendor/leaflet.js");
+const LEAFLET_CSS: &str = include_str!("../assets/vendor/leaflet.css");
+const MARKER_ICON: &[u8] = include_bytes!("../assets/vendor/marker-icon.png");
+const MARKER_SHADOW: &[u8] = include_bytes!("../assets/vendor/marker-shadow.png");
 const COOKIE: &str = "doppel_sess";
 
 pub fn serve(server: Server, state: Arc<AppState>) {
@@ -57,6 +61,10 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Get, "/vendor/xterm.css") => return serve_asset(req, XTERM_CSS, "text/css"),
         (Method::Get, "/vendor/addon-fit.js") => return serve_asset(req, ADDON_FIT, "application/javascript"),
         (Method::Get, "/vendor/addon-webgl.js") => return serve_asset(req, ADDON_WEBGL, "application/javascript"),
+        (Method::Get, "/vendor/leaflet.js") => return serve_asset(req, LEAFLET_JS, "application/javascript"),
+        (Method::Get, "/vendor/leaflet.css") => return serve_asset(req, LEAFLET_CSS, "text/css"),
+        (Method::Get, "/vendor/marker-icon.png") => return serve_bytes(req, MARKER_ICON, "image/png"),
+        (Method::Get, "/vendor/marker-shadow.png") => return serve_bytes(req, MARKER_SHADOW, "image/png"),
         (Method::Get, "/api/session") => {
             let authed = session_token(&req).map(|t| state.sessions.valid(&t)).unwrap_or(false);
             respond_json(req, 200, &json!({
@@ -157,13 +165,27 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             let mut sys = state.proc_sys.lock().unwrap();
             respond_json(req, 200, &json!(procs::collect(&mut sys)));
         }
+        (Method::Get, "/api/netio") => {
+            let (nin, nout, rx, tx) = pubnet::net_now(state);
+            respond_json(req, 200, &json!({ "in": nin, "out": nout, "rx": rx, "tx": tx }));
+        }
         (Method::Get, "/api/monitor") => {
+            let (nin, nout, rx, tx) = pubnet::net_now(state);
             let mut sys = state.proc_sys.lock().unwrap();
             sys.refresh_cpu_all();
             sys.refresh_memory();
             let procs = procs::collect(&mut sys); // faz refresh_processes
             let mon = sysmon::snapshot(&sys);
-            respond_json(req, 200, &json!({ "mon": mon, "procs": procs }));
+            respond_json(req, 200, &json!({
+                "mon": mon, "procs": procs,
+                "net": { "in": nin, "out": nout, "rx": rx, "tx": tx },
+            }));
+        }
+        (Method::Get, "/api/geoip") => {
+            respond_json(req, 200, &pubnet::geoip(state));
+        }
+        (Method::Get, "/api/neighbors") => {
+            respond_json(req, 200, &json!({ "devices": pubnet::neighbors() }));
         }
         (Method::Get, "/api/history") => {
             let h = state.history.lock().unwrap();
@@ -649,6 +671,13 @@ fn html_header() -> Header {
 
 fn serve_asset(req: Request, body: &str, ctype: &str) {
     let mut resp = Response::from_string(body);
+    resp.add_header(Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()).unwrap());
+    resp.add_header(Header::from_bytes(&b"Cache-Control"[..], &b"max-age=86400"[..]).unwrap());
+    let _ = req.respond(resp);
+}
+
+fn serve_bytes(req: Request, body: &[u8], ctype: &str) {
+    let mut resp = Response::from_data(body);
     resp.add_header(Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()).unwrap());
     resp.add_header(Header::from_bytes(&b"Cache-Control"[..], &b"max-age=86400"[..]).unwrap());
     let _ = req.respond(resp);

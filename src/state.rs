@@ -31,6 +31,9 @@ pub struct Sample {
     pub mem: f32,
     pub temp: f32,
     pub gpu: f32,
+    /// taxa de rede (bytes/s) recebida e enviada
+    pub net_in: f64,
+    pub net_out: f64,
 }
 
 extern "C" {
@@ -186,6 +189,11 @@ pub struct AppState {
     pub history: Mutex<VecDeque<Sample>>,
     /// Sessões de terminal ativas (id → PTY).
     pub terms: Mutex<HashMap<String, crate::term::TermSession>>,
+    /// Cache do geoip (ms, valor).
+    pub geoip_cache: Mutex<Option<(u128, serde_json::Value)>>,
+    /// Taxa de rede atual, calculada SÓ pelo sampler (in/s, out/s, rx, tx).
+    /// Fonte única — evita que vários pollers partilhem contadores e falseiem a taxa.
+    pub net_now: Mutex<(f64, f64, u64, u64)>,
 }
 
 impl AppState {
@@ -209,6 +217,8 @@ impl AppState {
             proc_sys: Mutex::new(System::new()),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_CAP)),
             terms: Mutex::new(HashMap::new()),
+            geoip_cache: Mutex::new(None),
+            net_now: Mutex::new((0.0, 0.0, 0, 0)),
         }
     }
 
