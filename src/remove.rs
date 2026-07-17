@@ -567,6 +567,43 @@ mod tests {
         assert!(crate::cron::set(&big).is_err());
     }
 
+    /// Validação ao vivo do mapa de tráfego (usa a Internet — ip-api batch):
+    ///   cargo test --release -- --ignored --nocapture trafego_real
+    #[test]
+    #[ignore]
+    fn trafego_real() {
+        let st = mkstate(tmp("tr1"), tmp("trhome"));
+        let eps = crate::pubnet::traffic(&st);
+        println!("\n[traffic] {} destinos geolocalizados", eps.len());
+        for e in eps.iter().take(12) {
+            println!("  {:<38} {:<16} {:<14} {:>5.1},{:<7.1} {}x", e.org, e.ip, e.country, e.lat, e.lon, e.count);
+        }
+        assert!(eps.iter().all(|e| e.lat != 0.0 || e.lon != 0.0), "cada destino deve ter coordenadas");
+    }
+
+    #[test]
+    fn mapa_de_trafego_filtra_ips() {
+        use crate::pubnet::{ip_of_peer_for_test as peer, is_public_ip_for_test as pubip};
+        // públicos (encaminháveis) → entram no mapa
+        assert!(pubip("8.8.8.8"));
+        assert!(pubip("142.250.185.14"));
+        assert!(pubip("2a00:1450:4003:80f::200e"));
+        // privados/locais → nunca vão para o ip-api
+        assert!(!pubip("192.168.1.10"));
+        assert!(!pubip("10.0.0.5"));
+        assert!(!pubip("172.16.95.43"));
+        assert!(!pubip("127.0.0.1"));
+        assert!(!pubip("169.254.1.1"));
+        assert!(!pubip("100.64.0.1"), "CGNAT não é público");
+        assert!(!pubip("::1"));
+        assert!(!pubip("fe80::1"), "link-local");
+        assert!(!pubip("fd00::1"), "ULA");
+        assert!(!pubip("lixo"));
+        // parse de peers do ss (IPv4 e IPv6)
+        assert_eq!(peer("142.250.185.14:443").as_deref(), Some("142.250.185.14"));
+        assert_eq!(peer("[2a00:1450::200e]:443").as_deref(), Some("2a00:1450::200e"));
+    }
+
     #[test]
     fn scanner_nativo() {
         // CIDR local: derivado das interfaces reais (ex.: 172.16.95.0/24)

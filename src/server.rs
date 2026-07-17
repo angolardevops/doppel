@@ -184,6 +184,9 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Get, "/api/geoip") => {
             respond_json(req, 200, &pubnet::geoip(state));
         }
+        (Method::Get, "/api/traffic") => {
+            respond_json(req, 200, &json!({ "endpoints": pubnet::traffic(state) }));
+        }
         (Method::Get, "/api/neighbors") => {
             respond_json(req, 200, &json!({
                 "devices": pubnet::neighbors(),

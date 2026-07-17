@@ -1,6 +1,7 @@
 //! Rede pública/geo: IP público + ISP + geolocalização (ip-api.com, com cache),
 //! dispositivos vizinhos (cache ARP via `ip neigh`) e taxas de I/O de rede.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::Command;
@@ -21,6 +22,23 @@ fn http_get(host: &str, path: &str) -> Result<String, String> {
     s.set_read_timeout(Some(Duration::from_secs(6))).ok();
     s.set_write_timeout(Some(Duration::from_secs(6))).ok();
     let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: doppel\r\nConnection: close\r\n\r\n");
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    s.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&buf);
+    Ok(text.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+}
+
+/// POST HTTP/1.0 minimalista com corpo JSON — devolve o corpo da resposta.
+fn http_post_json(host: &str, path: &str, body: &str) -> Result<String, String> {
+    let mut s = TcpStream::connect((host, 80)).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(8))).ok();
+    s.set_write_timeout(Some(Duration::from_secs(8))).ok();
+    let req = format!(
+        "POST {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: doppel\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
     s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     s.read_to_end(&mut buf).map_err(|e| e.to_string())?;
@@ -102,6 +120,130 @@ pub fn net_totals() -> (u64, u64) {
 /// Taxa de rede atual (in/s, out/s, rx, tx) — publicada pelo sampler.
 pub fn net_now(state: &AppState) -> (f64, f64, u64, u64) {
     *state.net_now.lock().unwrap()
+}
+
+// ---- mapa de tráfego: para onde as minhas ligações vão ---------------------
+
+#[derive(Serialize, Clone)]
+pub struct Endpoint {
+    pub ip: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub country: String,
+    pub city: String,
+    pub org: String,
+    /// nº de ligações estabelecidas para este destino
+    pub count: u32,
+}
+
+/// `true` se o IP é encaminhável na Internet (exclui privados/locais).
+fn is_public_ip(ip: &str) -> bool {
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v)) => {
+            !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_multicast() || v.is_unspecified() || v.is_broadcast()
+                || v.octets()[0] == 100 && (64..128).contains(&v.octets()[1])) // CGNAT 100.64/10
+        }
+        Ok(std::net::IpAddr::V6(v)) => {
+            let o = v.octets();
+            !(v.is_loopback() || v.is_multicast() || v.is_unspecified()
+                || (o[0] & 0xfe) == 0xfc            // ULA fc00::/7
+                || (o[0] == 0xfe && (o[1] & 0xc0) == 0x80)) // link-local fe80::/10
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+pub fn is_public_ip_for_test(ip: &str) -> bool {
+    is_public_ip(ip)
+}
+#[cfg(test)]
+pub fn ip_of_peer_for_test(p: &str) -> Option<String> {
+    ip_of_peer(p)
+}
+
+/// Extrai o IP de "1.2.3.4:443" ou "[2a00:1450::1]:443".
+fn ip_of_peer(peer: &str) -> Option<String> {
+    if let Some(rest) = peer.strip_prefix('[') {
+        rest.split(']').next().map(|s| s.to_string())
+    } else {
+        peer.rsplit_once(':').map(|(ip, _)| ip.to_string())
+    }
+}
+
+/// Destinos das ligações TCP estabelecidas, geolocalizados (com cache por IP).
+/// É a base do "mapa de para onde estou a navegar" — CDNs incluídos.
+pub fn traffic(state: &AppState) -> Vec<Endpoint> {
+    // 1) ligações estabelecidas → IPs remotos públicos, com contagem
+    let out = match Command::new("ss").args(["-tunH", "state", "established"]).output() {
+        Ok(o) => o.stdout,
+        Err(_) => return Vec::new(),
+    };
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for line in String::from_utf8_lossy(&out).lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 5 {
+            continue;
+        }
+        if let Some(ip) = ip_of_peer(f[4]) {
+            if is_public_ip(&ip) {
+                *counts.entry(ip).or_insert(0) += 1;
+            }
+        }
+    }
+    if counts.is_empty() {
+        return Vec::new();
+    }
+
+    // 2) geolocaliza os que ainda não estão em cache (batch, máx. 100)
+    let missing: Vec<String> = {
+        let cache = state.ipgeo_cache.lock().unwrap();
+        counts.keys().filter(|ip| !cache.contains_key(*ip)).take(100).cloned().collect()
+    };
+    if !missing.is_empty() {
+        let body = serde_json::to_string(&missing).unwrap_or_else(|_| "[]".into());
+        if let Ok(txt) = http_post_json("ip-api.com", "/batch?fields=status,query,lat,lon,country,city,org,as", &body) {
+            if let Ok(arr) = serde_json::from_str::<Vec<Value>>(&txt) {
+                let mut cache = state.ipgeo_cache.lock().unwrap();
+                for e in arr {
+                    if e.get("status").and_then(|s| s.as_str()) != Some("success") {
+                        continue;
+                    }
+                    let ip = e.get("query").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if ip.is_empty() {
+                        continue;
+                    }
+                    let org = {
+                        let o = e.get("org").and_then(|x| x.as_str()).unwrap_or("");
+                        if o.is_empty() { e.get("as").and_then(|x| x.as_str()).unwrap_or("") } else { o }
+                    };
+                    cache.insert(
+                        ip.clone(),
+                        Endpoint {
+                            ip,
+                            lat: e.get("lat").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            lon: e.get("lon").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            country: e.get("country").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                            city: e.get("city").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                            org: org.to_string(),
+                            count: 0,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    // 3) junta contagens atuais à geo em cache
+    let cache = state.ipgeo_cache.lock().unwrap();
+    let mut eps: Vec<Endpoint> = counts
+        .iter()
+        .filter_map(|(ip, n)| {
+            cache.get(ip).map(|e| Endpoint { count: *n, ..e.clone() })
+        })
+        .collect();
+    eps.sort_by(|a, b| b.count.cmp(&a.count));
+    eps
 }
 
 // ---- scanner de rede (crate netscan — Rust puro, sem root, sem nmap) -------

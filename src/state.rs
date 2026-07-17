@@ -191,6 +191,8 @@ pub struct AppState {
     pub terms: Mutex<HashMap<String, crate::term::TermSession>>,
     /// Cache do geoip (ms, valor).
     pub geoip_cache: Mutex<Option<(u128, serde_json::Value)>>,
+    /// Cache de geolocalização por IP remoto (mapa de tráfego).
+    pub ipgeo_cache: Mutex<HashMap<String, crate::pubnet::Endpoint>>,
     /// Taxa de rede atual, calculada SÓ pelo sampler (in/s, out/s, rx, tx).
     /// Fonte única — evita que vários pollers partilhem contadores e falseiem a taxa.
     pub net_now: Mutex<(f64, f64, u64, u64)>,
@@ -218,6 +220,7 @@ impl AppState {
             history: Mutex::new(VecDeque::with_capacity(HISTORY_CAP)),
             terms: Mutex::new(HashMap::new()),
             geoip_cache: Mutex::new(None),
+            ipgeo_cache: Mutex::new(HashMap::new()),
             net_now: Mutex::new((0.0, 0.0, 0, 0)),
         }
     }

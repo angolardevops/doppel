@@ -595,8 +595,10 @@
     <!-- mapa + dispositivos -->
     <div class="grid" style="grid-template-columns:1.4fr 1fr">
       <div class="panelbox">
-        <div class="systitle">🗺️ Onde estou <span id="geo-sub" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
-        <div id="map" style="height:340px;background:#05080d"></div>
+        <div class="systitle">🗺️ Onde estou · para onde vai o meu tráfego
+          <label class="uchk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="traf-on" checked> rotas ao vivo</label></div>
+        <div id="map" style="height:380px;background:#05080d"></div>
+        <div class="hint" id="traf-sub" style="padding:8px 14px">—</div>
       </div>
       <div class="panelbox">
         <div class="systitle">📶 Dispositivos na rede <span id="dev-n" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
@@ -1188,6 +1190,36 @@ async function loadGeo(){
     setTimeout(()=>MAP.invalidateSize(), 120);
   } else { $('#geo-sub').textContent = 'geolocalização indisponível (sem Internet?)'; }
 }
+// ---- mapa de tráfego: rotas ativas para onde estou a navegar ----
+let TRAFLAYER=null;
+async function pollTraffic(){
+  if(!MAP || !GEO || GEO.status!=='success' || !$('#traf-on').checked) return;
+  let d; try{ d = await (await fetch('/api/traffic')).json(); }catch(e){ return; }
+  const eps=d.endpoints||[];
+  if(TRAFLAYER) TRAFLAYER.remove();
+  TRAFLAYER = L.layerGroup().addTo(MAP);
+  const here=[GEO.lat,GEO.lon];
+  const maxC=Math.max(1,...eps.map(e=>e.count));
+  eps.forEach(e=>{
+    if(!e.lat && !e.lon) return;
+    const w=1+ (e.count/maxC)*3;
+    // rota ligeiramente curva (arco) para não sobrepor linhas
+    const mid=[(here[0]+e.lat)/2 + (e.lon-GEO.lon)*0.06, (here[1]+e.lon)/2 - (e.lat-GEO.lat)*0.06];
+    L.polyline([here, mid, [e.lat,e.lon]],{color:'#3ddad7',weight:w,opacity:.45,smoothFactor:2}).addTo(TRAFLAYER);
+    L.circleMarker([e.lat,e.lon],{radius:4+Math.min(6,e.count),color:'#7c8cff',fillColor:'#7c8cff',fillOpacity:.75,weight:1})
+      .bindPopup(`<b>${esc(e.org||e.ip)}</b><br>${esc(e.ip)}<br>${esc(e.city||'')}${e.city?', ':''}${esc(e.country||'')}<br>${e.count} ligação(ões)`)
+      .addTo(TRAFLAYER);
+  });
+  const paises=[...new Set(eps.map(e=>e.country).filter(Boolean))];
+  $('#traf-sub').innerHTML = eps.length
+    ? `<b>${eps.length}</b> destinos ativos · ${eps.reduce((a,e)=>a+e.count,0)} ligações · ${paises.length} país(es): ${paises.slice(0,6).map(esc).join(', ')}`
+    : 'sem ligações externas ativas neste momento';
+}
+$('#traf-on')&&$('#traf-on').addEventListener('change',e=>{
+  if(!e.target.checked && TRAFLAYER){ TRAFLAYER.remove(); TRAFLAYER=null; $('#traf-sub').textContent='rotas desligadas'; }
+  else pollTraffic();
+});
+
 let NETIO={in:0,out:0,rx:0,tx:0};
 function renderConnKpis(){
   const g=GEO||{}, ok=g.status==='success';
@@ -1200,8 +1232,11 @@ function renderConnKpis(){
   ];
   $('#conn-kpis').innerHTML = cards.join('');
 }
+let TRAFTICK=0;
 async function pollNetIo(){
   try{ NETIO = await (await fetch('/api/netio')).json(); renderConnKpis(); }catch(e){}
+  // as rotas mudam mais devagar que o I/O → atualiza a cada ~6s
+  if(TRAFTICK++ % 3 === 0) pollTraffic();
 }
 async function loadDevices(){
   try{
