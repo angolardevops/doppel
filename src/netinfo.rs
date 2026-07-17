@@ -27,13 +27,102 @@ pub struct Sock {
     pub peer: String,
 }
 #[derive(Serialize)]
+pub struct Route {
+    pub dst: String,
+    pub gateway: String,
+    pub dev: String,
+    pub proto: String,
+}
+#[derive(Serialize)]
 pub struct NetInfo {
     pub ifaces: Vec<Iface>,
     pub sockets: Vec<Sock>,
+    pub routes: Vec<Route>,
+    pub dns: Vec<String>,
 }
 
 pub fn info() -> NetInfo {
-    NetInfo { ifaces: ifaces(), sockets: sockets() }
+    NetInfo { ifaces: ifaces(), sockets: sockets(), routes: routes(), dns: dns() }
+}
+
+fn routes() -> Vec<Route> {
+    let out = match Command::new("ip").args(["-json", "route"]).output() {
+        Ok(o) => o.stdout,
+        Err(_) => return Vec::new(),
+    };
+    let v: Value = serde_json::from_slice(&out).unwrap_or(Value::Null);
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .map(|e| Route {
+                    dst: e.get("dst").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    gateway: e.get("gateway").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    dev: e.get("dev").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    proto: e.get("protocol").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn dns() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(s) = std::fs::read_to_string("/etc/resolv.conf") {
+        for line in s.lines() {
+            let l = line.trim();
+            if let Some(ns) = l.strip_prefix("nameserver ") {
+                out.push(format!("nameserver {}", ns.trim()));
+            } else if let Some(sr) = l.strip_prefix("search ") {
+                out.push(format!("search {}", sr.trim()));
+            }
+        }
+    }
+    out
+}
+
+fn valid_host(h: &str) -> bool {
+    !h.is_empty() && h.len() <= 255 && h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '_'))
+}
+
+/// ping a um host (como o utilizador; ICMP não-privilegiado no Linux moderno).
+pub fn ping(host: &str, count: u32) -> Result<String, String> {
+    if !valid_host(host) {
+        return Err("host inválido".into());
+    }
+    let n = count.clamp(1, 20).to_string();
+    let out = Command::new("ping")
+        .args(["-c", &n, "-W", "2", "-n", "--", host])
+        .output()
+        .map_err(|e| format!("ping indisponível: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if out.status.success() || !text.trim().is_empty() {
+        Ok(text)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// traceroute a um host (usa `traceroute` se existir, senão `tracepath`).
+pub fn trace(host: &str) -> Result<String, String> {
+    if !valid_host(host) {
+        return Err("host inválido".into());
+    }
+    let (cmd, args): (&str, Vec<&str>) = if which("traceroute") {
+        ("traceroute", vec!["-m", "20", "-w", "2", "-n", "--", host])
+    } else {
+        ("tracepath", vec!["-m", "20", host])
+    };
+    let out = Command::new(cmd).args(&args).output().map_err(|e| format!("{cmd} indisponível: {e}"))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = String::from_utf8_lossy(&out.stderr);
+    if !err.trim().is_empty() {
+        text.push_str(&err);
+    }
+    Ok(text)
+}
+
+fn which(cmd: &str) -> bool {
+    Command::new("sh").args(["-c", &format!("command -v {cmd}")]).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn ifaces() -> Vec<Iface> {

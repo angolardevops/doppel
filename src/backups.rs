@@ -69,6 +69,31 @@ pub fn remove(home: &Path, id: u64) -> Result<(), String> {
     save(home, &jobs)
 }
 
+/// Agenda um backup: acrescenta uma linha ao crontab do utilizador que corre o
+/// rsync na expressão `cron` dada (5 campos). Caminhos são citados (sem shell-injection
+/// via aspas simples; recusa caminhos com `'`).
+pub fn schedule(cron: &str, source: &str, dest: &str, mirror: bool) -> Result<(), String> {
+    valid_paths(source, dest)?;
+    let fields = cron.split_whitespace().count();
+    if fields != 5 {
+        return Err("expressão cron inválida (5 campos: min hora dia mês dia-semana)".into());
+    }
+    if source.contains('\'') || dest.contains('\'') {
+        return Err("caminhos com aspas simples não são suportados no agendamento".into());
+    }
+    let src = if source.ends_with('/') { source.to_string() } else { format!("{source}/") };
+    let del = if mirror { " --delete" } else { "" };
+    let line = format!("{} rsync -a{} '{}' '{}' >/dev/null 2>&1  # doppel-backup", cron.trim(), del, src, dest);
+
+    let mut content = crate::cron::get();
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(&line);
+    content.push('\n');
+    crate::cron::set(&content)
+}
+
 /// Corre um rsync origem→destino e devolve a saída (stats + erros).
 pub fn run(source: &str, dest: &str, mirror: bool) -> Result<String, String> {
     valid_paths(source, dest)?;

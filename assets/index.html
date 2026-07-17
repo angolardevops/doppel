@@ -21,7 +21,7 @@
     -webkit-font-smoothing:antialiased;
   }
   code,.mono{font-family:ui-monospace,"JetBrains Mono","SF Mono",Menlo,monospace}
-  .wrap{max-width:1580px;margin:0 auto;padding:24px 30px 40px}
+  .wrap{max-width:none;margin:0;padding:18px 26px 36px}
   a{color:var(--acc)}
   button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt);
     padding:9px 15px;border-radius:10px;transition:.15s;font-weight:600}
@@ -204,6 +204,11 @@
   .termwrap{background:#05080d;border:1px solid var(--line);border-radius:12px;padding:10px;height:70vh;min-height:420px}
   #term{width:100%;height:100%}
   .xterm{height:100%}
+
+  /* paginação */
+  .pager{display:flex;align-items:center;justify-content:center;gap:12px;padding:10px;border-top:1px solid var(--line);color:var(--mut);font-size:12px}
+  .pager button{padding:3px 12px;font-size:14px;line-height:1}
+  .qhint{color:var(--dim);font-size:11px;margin-top:6px}
 
   /* logs / rede / discos */
   select.crumb{cursor:pointer}
@@ -411,12 +416,16 @@
         <button id="fmkdir" class="btn-primary">📁 Nova pasta</button>
         <button id="fmkfile" class="btn-ghost">📄 Novo ficheiro</button>
       </div>
-      <div class="hint" style="margin:10px 0 0">Opera com as tuas permissões de utilizador (sem root). Elevação privilegiada virá num wizard dedicado.</div>
+      <div class="row" style="margin-top:10px">
+        <input class="crumb" id="ffilter" placeholder='filtrar… (ex.: kind:dir  ·  .txt -cache)' style="flex:1" />
+      </div>
+      <div class="hint" style="margin:8px 0 0">Opera com as tuas permissões (sem root). Falhas por permissões abrem o wizard de elevação.</div>
     </div>
     <div class="panelbox">
       <table class="ptab"><thead><tr><th>Nome</th><th>Dono</th><th class="mono">Perm.</th>
-        <th class="num">Tamanho</th><th class="num">Modificado</th><th style="width:150px">Ações</th></tr></thead>
+        <th class="num">Tamanho</th><th class="num">Modificado</th><th style="width:180px">Ações</th></tr></thead>
         <tbody id="files-body"></tbody></table>
+      <div id="files-pager"></div>
     </div>
   </div>
 
@@ -424,7 +433,7 @@
   <div id="view-users" style="display:none">
     <div class="picker">
       <div class="row">
-        <div class="info" style="flex:1;color:var(--mut);font-size:13px">Utilizadores do sistema · alterações via <b>sudo</b> (wizard de password)</div>
+        <input class="crumb" id="usearch" placeholder='filtrar… (ex.: sudo  ·  shell:bash -nologin)' style="flex:1" />
         <button id="ushowsys" class="btn-ghost">👁 Mostrar do sistema</button>
         <button id="unew" class="btn-primary">➕ Novo utilizador</button>
       </div>
@@ -447,6 +456,7 @@
       <table class="ptab"><thead><tr><th>Utilizador</th><th class="num">UID</th><th>Shell</th>
         <th>Grupos</th><th style="width:210px">Ações</th></tr></thead>
         <tbody id="users-body"></tbody></table>
+      <div id="users-pager"></div>
     </div>
   </div>
 
@@ -454,7 +464,7 @@
   <div id="view-svc" style="display:none">
     <div class="picker">
       <div class="row">
-        <input class="crumb" id="svc-search" placeholder="filtrar serviços…" style="flex:1" />
+        <input class="crumb" id="svc-search" placeholder='filtrar… (ex.: unit:cron -mask  ·  vários termos = E)' style="flex:1" />
         <button class="btn-ghost svcf on" data-f="running" onclick="svcFilter('running')">A correr</button>
         <button class="btn-ghost svcf" data-f="enabled" onclick="svcFilter('enabled')">Ativados</button>
         <button class="btn-ghost svcf" data-f="all" onclick="svcFilter('all')">Todos</button>
@@ -465,6 +475,7 @@
       <table class="ptab"><thead><tr><th>Serviço</th><th>Estado</th><th>Arranque</th>
         <th>Descrição</th><th style="width:220px">Ações</th></tr></thead>
         <tbody id="svc-body"></tbody></table>
+      <div id="svc-pager"></div>
     </div>
     <div class="panelbox">
       <div class="systitle">⏰ Timers (agendamentos) <button class="btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="loadTimers()">↻ carregar</button></div>
@@ -502,6 +513,7 @@
       <div class="systitle">🔎 Resultados</div>
       <table class="ptab"><thead><tr><th>Pacote</th><th>Descrição</th><th style="width:120px">Ação</th></tr></thead>
         <tbody id="pkg-results"></tbody></table>
+      <div id="pkg-pager"></div>
     </div>
   </div>
 
@@ -544,16 +556,32 @@
 
   <!-- ===== TAB: REDE ===== -->
   <div id="view-net" style="display:none">
-    <div class="hint">Interfaces e sockets · <button class="btn-ghost" style="padding:3px 9px" onclick="loadNet()">↻</button></div>
+    <div class="picker">
+      <div class="row">
+        <input class="crumb mono" id="net-host" placeholder="host ou IP (ex.: 1.1.1.1, google.com)" style="flex:1" />
+        <button class="btn-primary" onclick="netPing()">📡 Ping</button>
+        <button class="btn-ghost" onclick="netTrace()">🛰 Traceroute</button>
+        <div class="spacer"></div>
+        <button class="btn-ghost" onclick="loadNet()">↻ Recarregar</button>
+      </div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="panelbox"><div class="systitle">🧭 Rotas</div>
+        <table class="ptab"><thead><tr><th>Destino</th><th>Gateway</th><th>Interface</th><th>Proto</th></tr></thead>
+          <tbody id="net-routes"></tbody></table></div>
+      <div class="panelbox"><div class="systitle">🔎 DNS</div>
+        <div id="net-dns" style="padding:14px" class="mono psvc"></div></div>
+    </div>
     <div class="panelbox">
       <div class="systitle">🌐 Interfaces</div>
       <table class="ptab"><thead><tr><th>Interface</th><th>Estado</th><th>MAC</th><th>MTU</th><th>Endereços</th></tr></thead>
         <tbody id="net-if"></tbody></table>
     </div>
     <div class="panelbox">
-      <div class="systitle">🔌 Sockets</div>
+      <div class="systitle">🔌 Sockets <input class="crumb" id="sock-filter" placeholder="filtrar (ex.: listen :443)" style="margin-left:auto;max-width:260px;padding:5px 10px;font-size:12px"></div>
       <table class="ptab"><thead><tr><th>Proto</th><th>Estado</th><th>Local</th><th>Remoto</th></tr></thead>
         <tbody id="net-sock"></tbody></table>
+      <div id="sock-pager"></div>
     </div>
   </div>
 
@@ -644,6 +672,44 @@ function fdate(s){ if(!s) return '—'; const d=new Date(s*1000);
   return d.toLocaleDateString('pt-PT')+' '+d.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'}); }
 function short(h){ return h ? h.slice(0,12)+'…'+h.slice(-6) : ''; }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// pesquisa combinável: termos separados por espaço = E; "-termo" = NÃO contém;
+// "campo:valor" filtra num campo (obj[campo]); aspas agrupam ("a b").
+function matchQuery(fields, query){
+  if(!query || !query.trim()) return true;
+  const terms = query.match(/-?\w+:"[^"]*"|-?"[^"]*"|-?[^\s]+/g) || [];
+  const hay = Object.entries(fields);
+  return terms.every(raw=>{
+    let neg=false, t=raw;
+    if(t.startsWith('-')){ neg=true; t=t.slice(1); }
+    t=t.replace(/"/g,'');
+    let key=null, val=t;
+    const c=t.indexOf(':');
+    if(c>0){ key=t.slice(0,c).toLowerCase(); val=t.slice(c+1); }
+    val=val.toLowerCase();
+    let hit;
+    if(key){ const fv=(fields[key]!=null?String(fields[key]):'').toLowerCase(); hit=fv.includes(val); }
+    else { hit = hay.some(([,v])=> String(v==null?'':v).toLowerCase().includes(val)); }
+    return neg ? !hit : hit;
+  });
+}
+// paginação: devolve {slice, html}. `st` = {page, per}. onPage é o nome da fn global.
+const PAGE={};
+function paginate(id, items, onPage, per){
+  per = per||50; if(!PAGE[id]) PAGE[id]={page:0};
+  const pages = Math.max(1, Math.ceil(items.length/per));
+  if(PAGE[id].page>=pages) PAGE[id].page=pages-1;
+  const p=PAGE[id].page;
+  const slice = items.slice(p*per,(p+1)*per);
+  let html='';
+  if(pages>1){
+    html=`<div class="pager"><button class="btn-ghost" ${p<=0?'disabled':''} onclick="pageGo('${id}',${p-1},'${onPage}')">‹</button>
+      <span>${p+1} / ${pages} · ${items.length} itens</span>
+      <button class="btn-ghost" ${p>=pages-1?'disabled':''} onclick="pageGo('${id}',${p+1},'${onPage}')">›</button></div>`;
+  } else if(items.length>0){ html=`<div class="pager"><span>${items.length} itens</span></div>`; }
+  return {slice, html};
+}
+window.pageGo=(id,page,onPage)=>{ PAGE[id]={page}; if(window[onPage]) window[onPage](); };
 
 // ---- sessão / login ----
 async function boot(){
@@ -858,13 +924,21 @@ function renderCharts(samples){
 }
 
 // ---- gestor de ficheiros ----
-let FPATH='';
+let FPATH='', FLIST=[];
 async function loadFs(path){
   const r = await (await fetch('/api/fs/list?path='+encodeURIComponent(path))).json();
   FPATH=r.path; $('#fcrumb').value=r.path;
   if(r.error){ toast(r.error,true); }
+  FLIST = r.entries||[]; PAGE.files={page:0}; renderFiles();
+}
+$('#ffilter').addEventListener('input', ()=>{ PAGE.files={page:0}; renderFiles(); });
+function renderFiles(){
+  const q=$('#ffilter').value||'';
+  const list = FLIST.filter(e=> matchQuery({name:e.name, kind:e.kind, dono:e.owner, perm:e.perms}, q));
+  const pg = paginate('files', list, 'renderFiles', 100);
+  $('#files-pager').innerHTML = pg.html;
   const fileIcon=e=> e.kind==='dir'?'📁':e.kind==='link'?'🔗':'📄';
-  $('#files-body').innerHTML = (r.entries||[]).map(e=>{
+  $('#files-body').innerHTML = pg.slice.map(e=>{
     const nameHtml = e.kind==='dir'
       ? `<span class="fname" onclick="loadFs('${jsq(e.path)}')"><span class="ficon">${fileIcon(e)}</span>${esc(e.name)}</span>`
       : `<span><span class="ficon">${fileIcon(e)}</span>${esc(e.name)}</span>`;
@@ -880,7 +954,7 @@ async function loadFs(path){
         <button class="btn-ghost" title="dono (chown, root)" onclick="fChown('${jsq(e.path)}')">👤</button>
         <button class="btn-danger" title="apagar" onclick="fDelete('${jsq(e.path)}','${jsq(e.name)}',${e.kind==='dir'})">🗑</button>
       </div></td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="psvc" style="padding:16px">pasta vazia</td></tr>';
+  }).join('') || '<tr><td colspan="6" class="psvc" style="padding:16px">nada corresponde ao filtro</td></tr>';
 }
 function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 $('#fgo').onclick=()=>loadFs($('#fcrumb').value);
@@ -941,8 +1015,12 @@ async function loadUsers(){
   USERS = r.users||[]; renderUsers();
 }
 function renderUsers(){
-  const list = USHOWSYS ? USERS : USERS.filter(u=>!u.is_system);
-  $('#users-body').innerHTML = list.map(u=>{
+  const q=$('#usearch').value||'';
+  let list = (USHOWSYS ? USERS : USERS.filter(u=>!u.is_system))
+    .filter(u=> matchQuery({name:u.name, uid:u.uid, shell:u.shell, grupos:u.groups.join(' '), nome:u.gecos}, q));
+  const pg = paginate('users', list, 'renderUsers', 60);
+  $('#users-pager').innerHTML = pg.html;
+  $('#users-body').innerHTML = pg.slice.map(u=>{
     const chips = u.groups.map(g=>`<span class="gchip">${esc(g)}</span>`).join('');
     return `<tr>
       <td><b>${esc(u.name)}</b>${u.is_system?'<span class="ubadge">sistema</span>':''}<div class="psvc">${esc(u.gecos||u.home)}</div></td>
@@ -959,7 +1037,8 @@ function renderUsers(){
       </div></td></tr>`;
   }).join('') || '<tr><td colspan="5" class="psvc" style="padding:16px">sem utilizadores</td></tr>';
 }
-$('#ushowsys').onclick=()=>{ USHOWSYS=!USHOWSYS; $('#ushowsys').textContent = USHOWSYS?'🙈 Ocultar do sistema':'👁 Mostrar do sistema'; renderUsers(); };
+$('#ushowsys').onclick=()=>{ USHOWSYS=!USHOWSYS; PAGE.users={page:0}; $('#ushowsys').textContent = USHOWSYS?'🙈 Ocultar do sistema':'👁 Mostrar do sistema'; renderUsers(); };
+$('#usearch').addEventListener('input', ()=>{ PAGE.users={page:0}; renderUsers(); });
 $('#unew').onclick=()=>{ $('#ucreate').classList.toggle('on'); };
 $('#uc-cancel').onclick=()=>{ $('#ucreate').classList.remove('on'); };
 $('#uc-ok').onclick=()=>{
@@ -983,17 +1062,18 @@ async function loadServices(){
   const r = await (await fetch('/api/services')).json();
   SVCS = r.services||[]; renderServices();
 }
-window.svcFilter=(f)=>{ SVCF=f; document.querySelectorAll('.svcf').forEach(b=>b.classList.toggle('on',b.dataset.f===f)); renderServices(); };
-$('#svc-search').addEventListener('input', renderServices);
+window.svcFilter=(f)=>{ SVCF=f; PAGE.svc={page:0}; document.querySelectorAll('.svcf').forEach(b=>b.classList.toggle('on',b.dataset.f===f)); renderServices(); };
+$('#svc-search').addEventListener('input', ()=>{ PAGE.svc={page:0}; renderServices(); });
 function renderServices(){
-  const q=($('#svc-search').value||'').toLowerCase();
+  const q=$('#svc-search').value||'';
   let list = SVCS.filter(s=>{
     if(SVCF==='running' && s.sub!=='running') return false;
     if(SVCF==='enabled' && s.enabled!=='enabled') return false;
-    if(q && !(s.unit.toLowerCase().includes(q) || (s.description||'').toLowerCase().includes(q))) return false;
-    return true;
-  }).slice(0,400);
-  $('#svc-body').innerHTML = list.map(s=>{
+    return matchQuery({unit:s.unit, desc:s.description, estado:s.sub, arranque:s.enabled}, q);
+  });
+  const pg = paginate('svc', list, 'renderServices', 60);
+  $('#svc-pager').innerHTML = pg.html;
+  $('#svc-body').innerHTML = pg.slice.map(s=>{
     const st = s.active==='failed'?'failed':(s.sub==='running'||s.active==='active')?'active':'inactive';
     const running = s.sub==='running';
     return `<tr>
@@ -1040,21 +1120,44 @@ $('#log-unit').addEventListener('keydown',e=>{ if(e.key==='Enter') loadLogs(); }
 $('#log-grep').addEventListener('keydown',e=>{ if(e.key==='Enter') loadLogs(); });
 
 // ---- rede ----
+let NET={ifaces:[],sockets:[],routes:[],dns:[]};
 async function loadNet(){
-  const d = await (await fetch('/api/net')).json();
-  $('#net-if').innerHTML = (d.ifaces||[]).map(i=>{
+  NET = await (await fetch('/api/net')).json();
+  $('#net-if').innerHTML = (NET.ifaces||[]).map(i=>{
     const addrs = i.addrs.map(a=>`<span class="addr ${a.family==='inet6'?'v6':''}">${esc(a.ip)}/${a.prefix}</span>`).join('') || '<span class="psvc">—</span>';
     const up = i.state==='UP'||i.state==='UNKNOWN';
     return `<tr><td class="mono"><b>${esc(i.name)}</b></td>
       <td><span class="sbadge ${up?'active':'inactive'}">${esc(i.state||'?')}</span></td>
       <td class="psvc mono">${esc(i.mac||'—')}</td><td class="num psvc">${i.mtu}</td><td>${addrs}</td></tr>`;
   }).join('') || '<tr><td colspan="5" class="psvc" style="padding:14px">sem interfaces</td></tr>';
-  $('#net-sock').innerHTML = (d.sockets||[]).slice(0,300).map(s=>`<tr>
+  $('#net-routes').innerHTML = (NET.routes||[]).map(r=>`<tr>
+    <td class="mono"><b>${esc(r.dst)}</b></td><td class="mono psvc">${esc(r.gateway||'—')}</td>
+    <td class="psvc">${esc(r.dev)}</td><td class="psvc">${esc(r.proto)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="psvc" style="padding:14px">—</td></tr>';
+  $('#net-dns').innerHTML = (NET.dns||[]).map(x=>esc(x)).join('<br>') || '—';
+  PAGE.sock={page:0}; renderSockets();
+}
+$('#sock-filter').addEventListener('input', ()=>{ PAGE.sock={page:0}; renderSockets(); });
+function renderSockets(){
+  const q=$('#sock-filter').value||'';
+  const list=(NET.sockets||[]).filter(s=>matchQuery({proto:s.proto,estado:s.state,local:s.local,remoto:s.peer},q));
+  const pg=paginate('sock',list,'renderSockets',80);
+  $('#sock-pager').innerHTML=pg.html;
+  $('#net-sock').innerHTML = pg.slice.map(s=>`<tr>
     <td class="mono">${esc(s.proto)}</td>
     <td><span class="sen ${s.state==='LISTEN'?'enabled':''}">${esc(s.state)}</span></td>
     <td class="mono psvc">${esc(s.local)}</td><td class="mono psvc">${esc(s.peer)}</td></tr>`).join('')
     || '<tr><td colspan="4" class="psvc" style="padding:14px">sem sockets</td></tr>';
 }
+async function netTool(url, body, title){
+  showOutput(title, 'a executar…');
+  try{ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({})); showOutput(title, j.output||j.error||'(sem saída)'); }
+  catch(e){ showOutput(title,'erro de ligação'); }
+}
+function netPing(){ const h=$('#net-host').value.trim(); if(!h){toast('indica um host',true);return;} netTool('/api/net/ping',{host:h,count:5},'ping '+h); }
+function netTrace(){ const h=$('#net-host').value.trim(); if(!h){toast('indica um host',true);return;} netTool('/api/net/trace',{host:h},'traceroute '+h); }
+$('#net-host')&&$('#net-host').addEventListener('keydown',e=>{ if(e.key==='Enter') netPing(); });
 
 // ---- discos ----
 let DISK_SMART=false;
@@ -1115,7 +1218,13 @@ async function pkgSearch(){
   $('#pkg-searchbox').style.display='block';
   $('#pkg-results').innerHTML='<tr><td colspan="3" class="psvc" style="padding:14px">a pesquisar…</td></tr>';
   const r = await (await fetch('/api/pkg/search?q='+encodeURIComponent(q))).json();
-  $('#pkg-results').innerHTML = (r.results||[]).map(p=>`<tr>
+  PKGRES = r.results||[]; PAGE.pkg={page:0}; renderPkgResults();
+}
+let PKGRES=[];
+function renderPkgResults(){
+  const pg = paginate('pkg', PKGRES, 'renderPkgResults', 50);
+  $('#pkg-pager').innerHTML = pg.html;
+  $('#pkg-results').innerHTML = pg.slice.map(p=>`<tr>
     <td class="mono"><b>${esc(p.name)}</b></td><td class="psvc">${esc(p.description)}</td>
     <td><button class="btn-ghost" style="padding:3px 9px;font-size:11px" onclick="pkgAct('install','${jsq(p.name)}','Instalar ${esc(p.name)}.')">instalar</button></td>
   </tr>`).join('') || '<tr><td colspan="3" class="psvc" style="padding:14px">sem resultados</td></tr>';
@@ -1145,6 +1254,7 @@ async function loadBackups(){
     <td>${j.mirror?'<span class="sbadge failed">espelho</span>':'<span class="sbadge inactive">cópia</span>'}</td>
     <td><div class="fact">
       <button class="btn-primary" style="padding:3px 10px;font-size:11px" onclick="bkRun('${jsq(j.source)}','${jsq(j.dest)}',${j.mirror},'${esc(j.name)}')">▶ correr</button>
+      <button class="btn-ghost" style="padding:3px 9px;font-size:11px" title="agendar no crontab" onclick="bkSchedule('${jsq(j.source)}','${jsq(j.dest)}',${j.mirror})">⏰</button>
       <button class="btn-danger" style="padding:3px 9px;font-size:11px" onclick="bkRemove(${j.id})">🗑</button>
     </div></td></tr>`).join('') || '<tr><td colspan="4" class="psvc" style="padding:14px">sem tarefas — cria uma acima</td></tr>';
 }
@@ -1168,6 +1278,12 @@ window.bkRun=async (source,dest,mirror,name)=>{
 };
 window.bkRemove=async (id)=>{ if(!confirm('Remover esta tarefa? (não apaga ficheiros)')) return;
   await fetch('/api/backups/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadBackups(); };
+window.bkSchedule=async (source,dest,mirror)=>{
+  const cron=prompt('Agendamento cron (min hora dia mês dia-semana):','0 3 * * *'); if(!cron) return;
+  const r=await fetch('/api/backups/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,dest,mirror,cron})});
+  const j=await r.json().catch(()=>({}));
+  if(r.ok&&!j.error) toast('agendado no crontab (vê em Serviços › Crontab)',false); else toast(j.error||'falhou',true);
+};
 function procRow(p, primary, maxCpu, maxMem, nc){
   const cpuPct=(p.cpu/maxCpu*100).toFixed(0), memPct=(p.mem/maxMem*100).toFixed(0);
   const cpuSys=(p.cpu/nc);                       // % do sistema total (0–100)

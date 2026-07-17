@@ -317,6 +317,21 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
         (Method::Get, "/api/net") => {
             respond_json(req, 200, &json!(netinfo::info()));
         }
+        (Method::Post, "/api/net/ping") => {
+            let b = read_body(&mut req);
+            let count = b.get("count").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
+            match netinfo::ping(str_of(&b, "host"), count) {
+                Ok(t) => respond_json(req, 200, &json!({ "output": t })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
+        (Method::Post, "/api/net/trace") => {
+            let b = read_body(&mut req);
+            match netinfo::trace(str_of(&b, "host")) {
+                Ok(t) => respond_json(req, 200, &json!({ "output": t })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
         // ---- discos ----
         (Method::Get, "/api/disks") => {
             respond_json(req, 200, &disks::blocks());
@@ -382,6 +397,13 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
                 Ok(text) => respond_json(req, 200, &json!({ "output": text })),
                 Err(e) => respond_json(req, 400, &json!({ "error": e })),
             }
+        }
+        (Method::Post, "/api/backups/schedule") => {
+            let b = read_body(&mut req);
+            fs_result(req, backups::schedule(
+                str_of(&b, "cron"), str_of(&b, "source"), str_of(&b, "dest"),
+                b.get("mirror").and_then(|v| v.as_bool()).unwrap_or(false),
+            ));
         }
         // ---- cron do utilizador ----
         (Method::Get, "/api/cron") => {

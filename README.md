@@ -67,7 +67,7 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 📦 **Pacotes (APT)** | Listar atualizáveis e pesquisar; update/upgrade/install/remove via wizard `sudo`, com a saída mostrada. |
 | 💾 **Backups** | Tarefas `rsync` (origem→destino, cópia ou espelho); correr on-demand com a saída mostrada. |
 | 📜 **Logs** | Ver o journal (`journalctl`) com filtro por unit, prioridade e texto; auto-refresh. |
-| 🌐 **Rede** | Interfaces/IPs (`ip`) e sockets (`ss`) — só leitura. |
+| 🌐 **Rede** | Interfaces/IPs (`ip`), sockets (`ss`), rotas e DNS; ferramentas **ping** e **traceroute**. |
 | 🗄️ **Discos** | Árvore de dispositivos (`lsblk`), uso por pasta (`du`) e S.M.A.R.T. (`smartctl`, se instalado). |
 | 🖥️ **Terminal embebido** | Shell real (PTY) no browser via [xterm.js](https://xtermjs.org) com **renderer WebGL** (aceleração GPU). |
 

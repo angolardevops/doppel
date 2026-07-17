@@ -540,6 +540,9 @@ mod tests {
         // destino não-absoluto → rejeitado
         assert!(crate::backups::run(&s, "relativo", false).is_err());
 
+        // agendamento: cron inválido (≠5 campos) rejeitado sem tocar no crontab
+        assert!(crate::backups::schedule("0 3 *", &s, &d, false).is_err());
+
         let id = crate::backups::list(&home)[0].id;
         crate::backups::remove(&home, id).unwrap();
         assert!(crate::backups::list(&home).is_empty());
@@ -579,6 +582,9 @@ mod tests {
         assert!(!du.is_empty());
         // logs: journalctl (pode falhar sem grupo, mas não deve entrar em pânico)
         let _ = crate::logs::recent("", 5, "", "");
+        // ping/traceroute: host inválido rejeitado (sem correr)
+        assert!(crate::netinfo::ping("mau host!", 1).is_err());
+        assert!(crate::netinfo::trace("a;b|c").is_err());
         // smart validação: dispositivo inválido rejeitado sem sudo
         assert!(crate::disks::smart("walter", "", "sda").is_err());
         assert!(crate::disks::smart("walter", "", "/dev/x; rm").is_err());
