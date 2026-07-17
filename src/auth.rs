@@ -77,7 +77,12 @@ fn service_name() -> String {
 
 /// Autentica `user` com `password` via PAM. `true` = credenciais válidas.
 pub fn authenticate(user: &str, password: &str) -> bool {
-    let service = match CString::new(service_name()) {
+    authenticate_with(&service_name(), user, password)
+}
+
+/// Como `authenticate`, mas escolhendo o serviço PAM (usado no diagnóstico).
+pub fn authenticate_with(service: &str, user: &str, password: &str) -> bool {
+    let service = match CString::new(service) {
         Ok(s) => s,
         Err(_) => return false,
     };

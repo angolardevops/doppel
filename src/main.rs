@@ -53,6 +53,13 @@ fn main() {
         return;
     }
 
+    // Diagnóstico: testa a autenticação PAM com a password lida do terminal,
+    // usando exatamente o mesmo código que o login da UI (isola browser/JSON).
+    if args.iter().any(|a| a == "--check-auth") {
+        check_auth();
+        return;
+    }
+
     // Parsing simples de argumentos: --port <N>, --no-browser e PASTA posicional.
     let mut cli_port: Option<u16> = None;
     let mut no_browser = false;
@@ -146,6 +153,58 @@ fn main() {
     }
 
     server::serve(server, state);
+}
+
+/// Lê uma password do terminal com o eco desligado.
+fn read_password(prompt: &str) -> String {
+    use std::io::{BufRead, Write};
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+
+    let fd = 0; // stdin
+    let mut term: libc::termios = unsafe { std::mem::zeroed() };
+    let has_tty = unsafe { libc::tcgetattr(fd, &mut term) } == 0;
+    let saved = term;
+    if has_tty {
+        term.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) };
+    }
+    let mut line = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut line);
+    if has_tty {
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+        println!();
+    }
+    line.trim_end_matches(['\n', '\r']).to_string()
+}
+
+/// `--check-auth`: testa o PAM com o MESMO código do login da UI, mas com a
+/// password vinda do terminal — isola o browser/JSON do PAM. Testa também
+/// vários serviços, para se ver se algum aceita.
+fn check_auth() {
+    let (user, _) = auth::current_user();
+    println!("\n  Diagnóstico de autenticação PAM — utilizador: {user}");
+    let pw = read_password("  Password (não é mostrada nem guardada): ");
+    if pw.is_empty() {
+        println!("  (password vazia — nada a testar)");
+        return;
+    }
+    println!("  password recebida: {} caracteres, {} bytes\n", pw.chars().count(), pw.len());
+
+    let configured = std::env::var("DOPPEL_PAM_SERVICE").unwrap_or_else(|_| "login".into());
+    let mut candidates = vec![configured.clone()];
+    for s in ["login", "su", "sudo", "passwd", "system-auth", "common-auth", "other"] {
+        if !candidates.iter().any(|c| c == s) && std::path::Path::new(&format!("/etc/pam.d/{s}")).exists() {
+            candidates.push(s.to_string());
+        }
+    }
+    for svc in &candidates {
+        let ok = auth::authenticate_with(svc, &user, &pw);
+        println!("  {:<14} {}", svc, if ok { "✅ ACEITE" } else { "❌ recusada" });
+    }
+    println!("\n  Se algum serviço acima aceitar, usa-o assim:");
+    println!("    systemctl --user set-environment DOPPEL_PAM_SERVICE=<serviço>");
+    println!("  ou acrescenta à unit:  Environment=DOPPEL_PAM_SERVICE=<serviço>\n");
 }
 
 /// Tenta abrir o browser no ambiente de desktop (best-effort, silencioso).

@@ -3,9 +3,9 @@ members = [".", "crates/netscan"]
 
 [package]
 name = "doppel"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
-description = "Doppel — encontra e remove ficheiros duplicados com verificação byte-a-byte e UI web embebida em tempo real"
+description = "Doppel — consola de host num binário: duplicados com verificação byte-a-byte, ficheiros, utilizadores, serviços, pacotes, logs, rede/geo, discos, terminal e monitorização — UI web embebida com login PAM"
 license = "MIT"
 
 [[bin]]

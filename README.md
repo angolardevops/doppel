@@ -68,6 +68,10 @@ um ficheiro que não seja, com 100% de certeza, uma cópia exata de outro que fi
 | 💾 **Backups** | Tarefas `rsync` (origem→destino, cópia ou espelho); correr on-demand com a saída mostrada. |
 | 📜 **Logs** | Ver o journal (`journalctl`) com filtro por unit, prioridade e texto; auto-refresh. |
 | 🌐 **Rede** | Interfaces/IPs (`ip`), sockets (`ss`), rotas e DNS; ferramentas **ping** e **traceroute**. |
+| 🔍 **Scanner de rede** | Descobre dispositivos (IP, MAC, fabricante, hostname) com o crate próprio [`netscan`](crates/netscan) — **sem root e sem nmap**; clica num host para ver portas/serviços. |
+| 🗺️ **Geo & tráfego** | IP público, ISP e localização no **mapa Leaflet**; **rotas ao vivo** do teu tráfego (destinos geolocalizados, CDNs incluídos). |
+| ⚡ **Velocidade** | Teste de débito ⬇/⬆, latência e jitter — nativo, **sem `speedtest-cli`**. |
+| 🌍 **Idiomas** | **pt_AO** (por omissão) e **en**. |
 | 🗄️ **Discos** | Árvore de dispositivos (`lsblk`), uso por pasta (`du`) e S.M.A.R.T. (`smartctl`, se instalado). |
 | 🖥️ **Terminal embebido** | Shell real (PTY) no browser via [xterm.js](https://xtermjs.org) com **renderer WebGL** (aceleração GPU). |
 
