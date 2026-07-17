@@ -1,0 +1,10 @@
+[package]
+name = "netscan"
+version = "0.1.0"
+edition = "2021"
+description = "Descoberta de hosts e varrimento de portas em Rust puro, sem root e sem dependências externas (substitui o nmap no contexto do Doppel)"
+license = "MIT"
+
+[dependencies]
+rayon = "1"
+libc = "0.2"

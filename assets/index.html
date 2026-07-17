@@ -1203,18 +1203,13 @@ function renderConnKpis(){
 async function pollNetIo(){
   try{ NETIO = await (await fetch('/api/netio')).json(); renderConnKpis(); }catch(e){}
 }
-let NMAP=false;
 async function loadDevices(){
   try{
     const r = await (await fetch('/api/neighbors')).json();
-    NMAP = !!r.nmap;
     if(!$('#scan-target').value && (r.cidrs||[]).length) $('#scan-target').value = r.cidrs[0];
-    $('#scan-btn').disabled = !NMAP;
-    $('#dev-hint').innerHTML = NMAP
-      ? 'Cache ARP/NDP (passivo) · <b>Procurar</b> faz um scan nmap (pede password: o ARP precisa de root). Clica num host para ver portas/serviços.'
-      : '⚠️ <b>nmap não instalado</b> — só a cache ARP/NDP está disponível. Instala o nmap na tab <b>Pacotes</b> para descoberta ativa (fabricante, hostname, portas).';
-    // vista passiva (ARP) até haver um scan
-    renderDevices((r.devices||[]).map(x=>({ip:x.ip, hostname:'', mac:x.mac, vendor:'', latency:'', state:x.state})));
+    $('#dev-hint').innerHTML = 'Cache ARP/NDP (passiva) · <b>Procurar</b> varre a sub-rede em Rust puro — '
+      + '<b>sem root, sem nmap</b>. Clica num host para ver portas e serviços.';
+    renderDevices((r.devices||[]).map(x=>({ip:x.ip, hostname:'', mac:x.mac, vendor:'', latency:'', via:x.state})));
   }catch(e){}
 }
 function renderDevices(list){
@@ -1223,20 +1218,33 @@ function renderDevices(list){
     <td><span class="fname mono" onclick="hostScan('${jsq(x.ip)}')"><b>${esc(x.ip)}</b></span>
       ${x.hostname?`<div class="psvc">${esc(x.hostname)}</div>`:''}</td>
     <td class="mono psvc">${esc(x.mac||'—')}${x.vendor?`<div class="psvc">${esc(x.vendor)}</div>`:''}</td>
-    <td class="psvc">${x.latency?esc(x.latency)+' latência':''}${x.state?`<span class="sbadge ${x.state==='REACHABLE'?'active':'inactive'}">${esc(String(x.state).toLowerCase())}</span>`:''}</td>
+    <td class="psvc">${x.latency?esc(x.latency)+' ':''}${x.via?`<span class="sbadge ${/tcp|REACHABLE/i.test(x.via)?'active':'inactive'}">${esc(String(x.via).toLowerCase())}</span>`:''}</td>
   </tr>`).join('') || '<tr><td colspan="3" class="psvc" style="padding:14px">nenhum dispositivo</td></tr>';
 }
-$('#scan-btn').onclick=()=>{
+$('#scan-btn').onclick=async ()=>{
   const t=$('#scan-target').value.trim(); if(!t){ toast('indica uma sub-rede (ex.: 192.168.1.0/24)',true); return; }
-  askElevation('/api/net/scan',{target:t},`Procurar dispositivos em ${t} (o nmap precisa de root para ARP).`, (j)=>{
-    renderDevices(j.hosts||[]); toast(`${(j.hosts||[]).length} dispositivos encontrados`,false); });
+  const b=$('#scan-btn'); b.disabled=true; b.textContent='⏳ a varrer…';
+  try{
+    const r=await fetch('/api/net/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})});
+    const j=await r.json().catch(()=>({}));
+    if(j.error) toast(j.error,true);
+    else { renderDevices(j.hosts||[]); toast(`${(j.hosts||[]).length} dispositivos encontrados`,false); }
+  }catch(e){ toast('falha no varrimento',true); }
+  b.disabled=false; b.textContent='🔍 Procurar';
 };
 window.hostScan=async (ip)=>{
-  if(!NMAP){ toast('instala o nmap (tab Pacotes) para ver portas/serviços',true); return; }
-  showOutput('host '+ip, 'a analisar portas e serviços (pode demorar ~30s)…');
-  try{ const r=await fetch('/api/net/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
-    const j=await r.json().catch(()=>({})); showOutput('host '+ip, j.output||j.error||'(sem saída)'); }
-  catch(e){ showOutput('host '+ip,'erro de ligação'); }
+  showOutput('host '+ip, 'a varrer portas e serviços…');
+  try{
+    const r=await fetch('/api/net/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
+    const j=await r.json().catch(()=>({}));
+    if(j.error){ showOutput('host '+ip, j.error); return; }
+    const ps=j.ports||[];
+    const txt = ps.length
+      ? 'PORTA   SERVIÇO           BANNER\n' + '─'.repeat(60) + '\n' +
+        ps.map(p=>`${String(p.port).padEnd(7)} ${(p.service||'?').padEnd(17)} ${p.banner||''}`).join('\n')
+      : 'Nenhuma das portas comuns está aberta neste host.';
+    showOutput(`host ${ip} · ${ps.length} porta(s) aberta(s)`, txt);
+  }catch(e){ showOutput('host '+ip,'erro de ligação'); }
 };
 
 // ---- rede ----

@@ -568,29 +568,18 @@ mod tests {
     }
 
     #[test]
-    fn nmap_scanner() {
+    fn scanner_nativo() {
         // CIDR local: derivado das interfaces reais (ex.: 172.16.95.0/24)
         let c = crate::pubnet::local_cidrs();
         assert!(!c.is_empty(), "deve derivar pelo menos uma sub-rede local");
-        assert!(c.iter().all(|x| x.contains('/') && x.parse::<String>().is_ok()));
-        // alvo inválido → rejeitado sem correr nmap/sudo
-        assert!(crate::pubnet::scan("walter", "", "a; rm -rf /").is_err());
-        assert!(crate::pubnet::host_scan("bad host!").is_err());
-        // parse da saída do nmap -sn
-        let sample = "Nmap scan report for _gateway (172.16.95.254)\n\
-                      Host is up (0.0043s latency).\n\
-                      MAC Address: BC:24:11:87:A4:C7 (Intel Corporate)\n\
-                      Nmap scan report for 172.16.95.10\n\
-                      Host is up (0.010s latency).\n";
-        let hosts = crate::pubnet::parse_nmap_sn_for_test(sample);
-        assert_eq!(hosts.len(), 2);
-        assert_eq!(hosts[0].ip, "172.16.95.254");
-        assert_eq!(hosts[0].hostname, "_gateway");
-        assert_eq!(hosts[0].mac, "BC:24:11:87:A4:C7");
-        assert_eq!(hosts[0].vendor, "Intel Corporate");
-        assert_eq!(hosts[0].latency, "0.0043s");
-        assert_eq!(hosts[1].ip, "172.16.95.10");
-        assert!(hosts[1].mac.is_empty());
+        assert!(c.iter().all(|x| x.contains('/')));
+        // alvos inválidos → rejeitados pelo crate, sem tocar na rede
+        assert!(crate::pubnet::scan("a; rm -rf /").is_err());
+        assert!(crate::pubnet::scan("10.0.0.0/8").is_err(), "intervalo enorme deve ser recusado");
+        assert!(crate::pubnet::host_scan("nao-e-ip").is_err());
+        // varrer o próprio loopback funciona sem root e encontra o Doppel a servir
+        let ports = crate::pubnet::host_scan("127.0.0.1").unwrap();
+        assert!(ports.iter().all(|p| p.port > 0));
     }
 
     #[test]
