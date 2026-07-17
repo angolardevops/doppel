@@ -33,9 +33,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
-      - name: Instalar libpam (dev)
-        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0g-dev
-      # `cargo check` não linka, por isso não precisa do libpam de arm64 —
-      # mesmo assim valida os tipos de FFI para aarch64.
+      # O `cargo check` não linka (logo não precisa do libpam de arm64), mas
+      # CORRE os build scripts — e o do blake3 compila C, exigindo o
+      # cross-compiler. Sem ele: "failed to find tool aarch64-linux-gnu-gcc".
+      - name: Instalar libpam (dev) e cross-compiler aarch64
+        run: sudo apt-get update && sudo apt-get install --assume-yes libpam0g-dev gcc-aarch64-linux-gnu
       - name: Verificar compilação para aarch64
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: cargo check --release --workspace --target aarch64-unknown-linux-gnu
