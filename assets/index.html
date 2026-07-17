@@ -600,9 +600,13 @@
       </div>
       <div class="panelbox">
         <div class="systitle">📶 Dispositivos na rede <span id="dev-n" class="psvc" style="margin-left:auto;font-weight:600"></span></div>
-        <table class="ptab"><thead><tr><th>IP</th><th>MAC</th><th>Interface</th><th>Estado</th></tr></thead>
+        <div class="row" style="padding:10px 14px;gap:8px">
+          <input class="crumb mono" id="scan-target" placeholder="192.168.1.0/24" style="flex:1;padding:6px 10px;font-size:12px" />
+          <button class="btn-primary" id="scan-btn" style="padding:5px 12px;font-size:12px">🔍 Procurar</button>
+        </div>
+        <table class="ptab"><thead><tr><th>IP / Host</th><th>MAC · Fabricante</th><th>Info</th></tr></thead>
           <tbody id="dev-body"></tbody></table>
-        <div class="hint" style="padding:10px 14px">Descoberta agentless via cache ARP/NDP (sem instalar nada, sem root).</div>
+        <div class="hint" id="dev-hint" style="padding:10px 14px"></div>
       </div>
     </div>
 
@@ -1199,18 +1203,41 @@ function renderConnKpis(){
 async function pollNetIo(){
   try{ NETIO = await (await fetch('/api/netio')).json(); renderConnKpis(); }catch(e){}
 }
+let NMAP=false;
 async function loadDevices(){
   try{
     const r = await (await fetch('/api/neighbors')).json();
-    const d = r.devices||[];
-    $('#dev-n').textContent = d.length+' vistos';
-    $('#dev-body').innerHTML = d.map(x=>`<tr>
-      <td class="mono"><b>${esc(x.ip)}</b></td><td class="mono psvc">${esc(x.mac)}</td>
-      <td class="psvc">${esc(x.dev)}</td>
-      <td><span class="sbadge ${x.state==='REACHABLE'?'active':'inactive'}">${esc(x.state.toLowerCase())}</span></td>
-    </tr>`).join('') || '<tr><td colspan="4" class="psvc" style="padding:14px">nenhum vizinho em cache</td></tr>';
+    NMAP = !!r.nmap;
+    if(!$('#scan-target').value && (r.cidrs||[]).length) $('#scan-target').value = r.cidrs[0];
+    $('#scan-btn').disabled = !NMAP;
+    $('#dev-hint').innerHTML = NMAP
+      ? 'Cache ARP/NDP (passivo) · <b>Procurar</b> faz um scan nmap (pede password: o ARP precisa de root). Clica num host para ver portas/serviços.'
+      : '⚠️ <b>nmap não instalado</b> — só a cache ARP/NDP está disponível. Instala o nmap na tab <b>Pacotes</b> para descoberta ativa (fabricante, hostname, portas).';
+    // vista passiva (ARP) até haver um scan
+    renderDevices((r.devices||[]).map(x=>({ip:x.ip, hostname:'', mac:x.mac, vendor:'', latency:'', state:x.state})));
   }catch(e){}
 }
+function renderDevices(list){
+  $('#dev-n').textContent = list.length+' dispositivos';
+  $('#dev-body').innerHTML = list.map(x=>`<tr>
+    <td><span class="fname mono" onclick="hostScan('${jsq(x.ip)}')"><b>${esc(x.ip)}</b></span>
+      ${x.hostname?`<div class="psvc">${esc(x.hostname)}</div>`:''}</td>
+    <td class="mono psvc">${esc(x.mac||'—')}${x.vendor?`<div class="psvc">${esc(x.vendor)}</div>`:''}</td>
+    <td class="psvc">${x.latency?esc(x.latency)+' latência':''}${x.state?`<span class="sbadge ${x.state==='REACHABLE'?'active':'inactive'}">${esc(String(x.state).toLowerCase())}</span>`:''}</td>
+  </tr>`).join('') || '<tr><td colspan="3" class="psvc" style="padding:14px">nenhum dispositivo</td></tr>';
+}
+$('#scan-btn').onclick=()=>{
+  const t=$('#scan-target').value.trim(); if(!t){ toast('indica uma sub-rede (ex.: 192.168.1.0/24)',true); return; }
+  askElevation('/api/net/scan',{target:t},`Procurar dispositivos em ${t} (o nmap precisa de root para ARP).`, (j)=>{
+    renderDevices(j.hosts||[]); toast(`${(j.hosts||[]).length} dispositivos encontrados`,false); });
+};
+window.hostScan=async (ip)=>{
+  if(!NMAP){ toast('instala o nmap (tab Pacotes) para ver portas/serviços',true); return; }
+  showOutput('host '+ip, 'a analisar portas e serviços (pode demorar ~30s)…');
+  try{ const r=await fetch('/api/net/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
+    const j=await r.json().catch(()=>({})); showOutput('host '+ip, j.output||j.error||'(sem saída)'); }
+  catch(e){ showOutput('host '+ip,'erro de ligação'); }
+};
 
 // ---- rede ----
 let NET={ifaces:[],sockets:[],routes:[],dns:[]};

@@ -103,3 +103,132 @@ pub fn net_totals() -> (u64, u64) {
 pub fn net_now(state: &AppState) -> (f64, f64, u64, u64) {
     *state.net_now.lock().unwrap()
 }
+
+// ---- scanner de rede (nmap) ------------------------------------------------
+
+pub fn nmap_available() -> bool {
+    Command::new("nmap").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Sub-redes locais (CIDR de rede) derivadas das interfaces IPv4 não-loopback.
+pub fn local_cidrs() -> Vec<String> {
+    let out = match Command::new("ip").args(["-json", "addr", "show"]).output() {
+        Ok(o) => o.stdout,
+        Err(_) => return Vec::new(),
+    };
+    let v: Value = serde_json::from_slice(&out).unwrap_or(Value::Null);
+    let mut cidrs = Vec::new();
+    for e in v.as_array().unwrap_or(&vec![]) {
+        let name = e.get("ifname").and_then(|x| x.as_str()).unwrap_or("");
+        if name == "lo" {
+            continue;
+        }
+        for ai in e.get("addr_info").and_then(|a| a.as_array()).unwrap_or(&vec![]) {
+            if ai.get("family").and_then(|x| x.as_str()) != Some("inet") {
+                continue;
+            }
+            let ip = ai.get("local").and_then(|x| x.as_str()).unwrap_or("");
+            let plen = ai.get("prefixlen").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            if plen == 0 || plen > 32 {
+                continue;
+            }
+            if let Ok(addr) = ip.parse::<std::net::Ipv4Addr>() {
+                let bits = u32::from(addr);
+                let mask = if plen == 0 { 0 } else { u32::MAX << (32 - plen) };
+                let net = std::net::Ipv4Addr::from(bits & mask);
+                let c = format!("{net}/{plen}");
+                if !cidrs.contains(&c) {
+                    cidrs.push(c);
+                }
+            }
+        }
+    }
+    cidrs
+}
+
+#[derive(Serialize)]
+pub struct ScanHost {
+    pub ip: String,
+    pub hostname: String,
+    pub mac: String,
+    pub vendor: String,
+    pub latency: String,
+}
+
+fn valid_target(t: &str) -> bool {
+    !t.is_empty()
+        && t.len() <= 64
+        && t.chars().all(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '/' | '-'))
+}
+
+/// Descoberta de hosts (`nmap -sn`) via sudo — root permite ARP + MAC/vendor.
+pub fn scan(admin: &str, pw: &str, target: &str) -> Result<Vec<ScanHost>, String> {
+    if !nmap_available() {
+        return Err("nmap não está instalado (instala-o na tab Pacotes)".into());
+    }
+    if !valid_target(target) {
+        return Err("alvo inválido (ex.: 192.168.1.0/24)".into());
+    }
+    let text = crate::elevate::sudo_output(admin, pw, &["nmap", "-sn", "-n", "--", target])?;
+    Ok(parse_nmap_sn(&text))
+}
+
+/// Exposto para testes (o parse é a parte com lógica; o nmap em si é externo).
+#[cfg(test)]
+pub fn parse_nmap_sn_for_test(text: &str) -> Vec<ScanHost> {
+    parse_nmap_sn(text)
+}
+
+/// Parse da saída normal do `nmap -sn`.
+fn parse_nmap_sn(text: &str) -> Vec<ScanHost> {
+    let mut hosts: Vec<ScanHost> = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("Nmap scan report for ") {
+            // "host (1.2.3.4)" ou só "1.2.3.4"
+            let (hostname, ip) = match (rest.find('('), rest.ends_with(')')) {
+                (Some(i), true) => (rest[..i].trim().to_string(), rest[i + 1..rest.len() - 1].to_string()),
+                _ => (String::new(), rest.to_string()),
+            };
+            hosts.push(ScanHost { ip, hostname, mac: String::new(), vendor: String::new(), latency: String::new() });
+        } else if let Some(rest) = l.strip_prefix("MAC Address: ") {
+            if let Some(h) = hosts.last_mut() {
+                let (mac, vendor) = match rest.find('(') {
+                    Some(i) => (rest[..i].trim().to_string(), rest[i + 1..].trim_end_matches(')').to_string()),
+                    None => (rest.trim().to_string(), String::new()),
+                };
+                h.mac = mac;
+                h.vendor = vendor;
+            }
+        } else if l.starts_with("Host is up") {
+            if let Some(h) = hosts.last_mut() {
+                if let (Some(a), Some(b)) = (l.find('('), l.find(" latency)")) {
+                    if a < b {
+                        h.latency = l[a + 1..b].to_string();
+                    }
+                }
+            }
+        }
+    }
+    hosts
+}
+
+/// Detalhe de um host: portas/serviços (`nmap -sV`, sem root). Devolve o texto.
+pub fn host_scan(ip: &str) -> Result<String, String> {
+    if !nmap_available() {
+        return Err("nmap não está instalado (instala-o na tab Pacotes)".into());
+    }
+    if !valid_target(ip) {
+        return Err("host inválido".into());
+    }
+    let out = Command::new("nmap")
+        .args(["-sV", "-T4", "--top-ports", "100", "-n", "--", ip])
+        .output()
+        .map_err(|e| format!("nmap indisponível: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if text.trim().is_empty() {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    } else {
+        Ok(text)
+    }
+}

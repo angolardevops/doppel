@@ -185,7 +185,25 @@ fn handle(mut req: Request, state: &Arc<AppState>) {
             respond_json(req, 200, &pubnet::geoip(state));
         }
         (Method::Get, "/api/neighbors") => {
-            respond_json(req, 200, &json!({ "devices": pubnet::neighbors() }));
+            respond_json(req, 200, &json!({
+                "devices": pubnet::neighbors(),
+                "nmap": pubnet::nmap_available(),
+                "cidrs": pubnet::local_cidrs(),
+            }));
+        }
+        (Method::Post, "/api/net/scan") => {
+            let b = read_body(&mut req);
+            match pubnet::scan(state.run_user.as_str(), str_of(&b, "password"), str_of(&b, "target")) {
+                Ok(hosts) => respond_json(req, 200, &json!({ "hosts": hosts })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
+        }
+        (Method::Post, "/api/net/host") => {
+            let b = read_body(&mut req);
+            match pubnet::host_scan(str_of(&b, "ip")) {
+                Ok(t) => respond_json(req, 200, &json!({ "output": t })),
+                Err(e) => respond_json(req, 400, &json!({ "error": e })),
+            }
         }
         (Method::Get, "/api/history") => {
             let h = state.history.lock().unwrap();
