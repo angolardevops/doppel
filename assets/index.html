@@ -78,7 +78,8 @@
   .tab .n{margin-left:auto;min-width:20px;text-align:center;font-size:11px;background:#1c2636;color:var(--warn);
     border-radius:20px;padding:1px 7px}
   .side-foot{padding:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
-  .side-foot .who{flex:1;color:var(--dim);font-size:11px;line-height:1.3}
+  .langsel{width:auto;padding:5px 6px;font-size:11px;border-radius:8px;background:var(--panel2);cursor:pointer}
+  .side-foot .who{flex:1;color:var(--dim);font-size:11px;line-height:1.3;min-width:0}
   .side-foot .who b{display:block;color:var(--txt);font-size:13px}
   .side-foot button{padding:6px 12px;font-size:12px}
   @media(max-width:820px){
@@ -318,6 +319,10 @@
   </nav>
   <div class="side-foot">
     <div class="who">sessão<b id="who">—</b></div>
+    <select id="lang-sel" class="langsel" title="idioma / language">
+      <option value="pt">🇦🇴 PT</option>
+      <option value="en">🇬🇧 EN</option>
+    </select>
     <button class="btn-ghost" id="logout">Sair</button>
   </div>
 </aside>
@@ -712,6 +717,95 @@
 <script src="/vendor/addon-webgl.js"></script>
 <script>
 const $ = s => document.querySelector(s);
+
+// ============ i18n ============
+// O português (pt_AO) é a fonte de verdade e vive no próprio HTML/JS — por isso
+// só precisamos de UM dicionário (pt→en). Um MutationObserver traduz também o
+// que o JS renderiza depois. Trocar de idioma grava e recarrega, garantindo que
+// a reversão para pt é sempre perfeita (o HTML original é a origem).
+const EN = {
+  // navegação
+  'Duplicados':'Duplicates','Quarentena':'Quarantine','Ficheiros':'Files','Utilizadores':'Users',
+  'Serviços':'Services','Pacotes':'Packages','Backups':'Backups','Logs':'Logs','Rede':'Network',
+  'Discos':'Disks','Terminal':'Terminal','Sistema':'System','sessão':'session','Sair':'Sign out',
+  // login
+  'Inicia sessão com a tua conta do sistema para gerir duplicados.':'Sign in with your system account to manage duplicates.',
+  'Utilizador':'Username','Password':'Password','Entrar':'Sign in','utilizador e password obrigatórios':'username and password required',
+  'autenticação falhou':'authentication failed',
+  // duplicados / quarentena
+  'Analisar':'Scan','Forçar':'Force','Procurar…':'Browse…','Limpar cache':'Clear cache',
+  'Total na pasta':'Total in folder','Recuperável':'Reclaimable','Em quarentena':'Quarantined',
+  'Já libertado':'Already freed','Memória':'Memory','Disco':'Disk','ficheiros':'files','grupos':'groups',
+  'Selecionar todos os duplicados':'Select all duplicates','Limpar seleção':'Clear selection',
+  'Selecionados:':'Selected:','Enviar p/ quarentena':'Send to quarantine','Limpar (apagar já)':'Clean (delete now)',
+  'manter':'keep','manter esta':'keep this one','desperdício':'wasted','mostrar mais':'show more',
+  'Sem duplicados nesta pasta. Escolhe outra e analisa.':'No duplicates here. Pick another folder and scan.',
+  'Quarentena vazia.':'Quarantine is empty.','Restaurar':'Restore','Remover definitivo':'Delete permanently',
+  'Selecionar tudo':'Select all','Limpar':'Clear','Cancelar':'Cancel',
+  // ficheiros
+  'Subir':'Up','Ir':'Go','Nova pasta':'New folder','Novo ficheiro':'New file','Nome':'Name','Dono':'Owner',
+  'Perm.':'Perm.','Tamanho':'Size','Modificado':'Modified','Ações':'Actions','pasta vazia':'empty folder',
+  'nada corresponde ao filtro':'nothing matches the filter',
+  // utilizadores
+  'Novo utilizador':'New user','Mostrar do sistema':'Show system','Ocultar do sistema':'Hide system',
+  'sistema':'system','Grupos':'Groups','criar home':'create home','sem utilizadores':'no users',
+  // serviços / pacotes / backups
+  'A correr':'Running','Ativados':'Enabled','Todos':'All','Serviço':'Service','Estado':'State',
+  'Arranque':'Startup','Descrição':'Description','Timers (agendamentos)':'Timers (schedules)',
+  'carregar':'load','Crontab do utilizador':'User crontab','Guardar':'Save','recarregar':'reload',
+  'Atualizar listas':'Refresh lists','Atualizar tudo':'Upgrade all','Pesquisar':'Search',
+  'Atualizações disponíveis':'Available updates','Pacote':'Package','Resultados':'Results',
+  'atualizar':'upgrade','instalar':'install','sem resultados':'no results','tudo atualizado 🎉':'all up to date 🎉',
+  'Tarefa':'Task','Origem → Destino':'Source → Destination','Modo':'Mode','correr':'run','espelho':'mirror',
+  'cópia':'copy','Guardar tarefa':'Save task','sem tarefas — cria uma acima':'no tasks — create one above',
+  // rede / discos / sistema
+  'Interfaces':'Interfaces','Sockets':'Sockets','Rotas':'Routes','Destino':'Destination','Gateway':'Gateway',
+  'Interface':'Interface','Proto':'Proto','Local':'Local','Remoto':'Remote','Recarregar':'Reload',
+  'Testar velocidade':'Speed test','Dispositivos na rede':'Devices on the network','dispositivos':'devices',
+  'IP público':'Public IP','Operador':'Carrier','Localização':'Location','Latência':'Latency',
+  'Onde estou · para onde vai o meu tráfego':'Where I am · where my traffic goes','rotas ao vivo':'live routes',
+  'Dispositivos de bloco':'Block devices','Uso por pasta':'Usage by folder','Tipo':'Type','Montagem':'Mount',
+  'Modelo':'Model','Ocupação':'Usage','Livre':'Free','Ponto de montagem':'Mount point','Pasta':'Folder',
+  'Mapa de calor da CPU':'CPU heat map','Histórico':'History','Partições & sistemas de ficheiros':'Partitions & filesystems',
+  'Top CPU':'Top CPU','Top Memória':'Top Memory','Processo':'Process','ocioso':'idle','saturado':'saturated',
+  'core desligado':'core offline','Temperatura':'Temperature','Uptime':'Uptime','Velocidade':'Speed',
+  'Monitorização do host em tempo real · atualiza a cada 2s':'Real-time host monitoring · updates every 2s',
+  // elevação / genéricos
+  'Permissões de administrador':'Administrator permissions','Executar como root':'Run as root',
+  'password do sistema':'system password','Fechar':'Close','Saída':'Output','executado como root':'ran as root',
+  'password incorreta':'wrong password','Introduz a password.':'Enter the password.',
+  'erro de ligação':'connection error','falhou':'failed','Sem duplicados por aqui. Tudo limpo!':'No duplicates here. All clean!',
+};
+const LANG = localStorage.getItem('doppel-lang') || 'pt';
+// não traduzir dados/saída crua (nomes de ficheiros, logs, terminal, mapa)
+const NOI18N = new Set(['term','log-out','out-text','cron-txt','map']);
+function inSkipped(node){
+  for(let e=node.parentElement; e; e=e.parentElement) if(e.id && NOI18N.has(e.id)) return true;
+  return false;
+}
+function tr(s){ const k=s.trim(); return EN[k] ? s.replace(k, EN[k]) : null; }
+function i18nWalk(root){
+  if(LANG!=='en' || !root) return;
+  const w=document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const todo=[]; let n;
+  while((n=w.nextNode())) if(n.nodeValue.trim() && !inSkipped(n)) todo.push(n);
+  todo.forEach(n=>{ const t=tr(n.nodeValue); if(t!==null) n.nodeValue=t; });
+  // atributos visíveis
+  root.querySelectorAll&&root.querySelectorAll('[placeholder],[title]').forEach(el=>{
+    ['placeholder','title'].forEach(a=>{ const v=el.getAttribute(a); if(!v) return;
+      const t=EN[v.trim()]; if(t) el.setAttribute(a,t); });
+  });
+}
+// traduz também tudo o que for renderizado depois (tabelas, modais, toasts)
+function i18nObserve(){
+  if(LANG!=='en') return;
+  new MutationObserver(ms=>{
+    ms.forEach(m=>m.addedNodes.forEach(n=>{
+      if(n.nodeType===1) i18nWalk(n);
+      else if(n.nodeType===3 && n.nodeValue.trim() && !inSkipped(n)){ const t=tr(n.nodeValue); if(t!==null) n.nodeValue=t; }
+    }));
+  }).observe(document.body,{childList:true,subtree:true});
+}
 let GROUPS=[], VERSION=-1, SELECTED=new Set(), openState={}, renderLimit=80;
 let QUAR=[], QSEL=new Set(), TAB='dups', RUN={};
 
@@ -1647,6 +1741,13 @@ async function startTermSession(){
 $('#term-restart').onclick = async ()=>{ if(TERMID) fetch('/api/term/close?id='+TERMID,{method:'POST'});
   TERMID=null; if(TERM) TERM.reset(); await startTermSession(); };
 window.addEventListener('beforeunload',()=>{ if(TERMID) navigator.sendBeacon('/api/term/close?id='+TERMID); });
+
+// ---- idioma ----
+$('#lang-sel').value = LANG;
+$('#lang-sel').onchange = e => { localStorage.setItem('doppel-lang', e.target.value); location.reload(); };
+document.documentElement.lang = LANG === 'en' ? 'en' : 'pt-AO';
+i18nObserve();
+i18nWalk(document.body);
 
 boot();
 </script>
